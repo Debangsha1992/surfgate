@@ -877,8 +877,6 @@ General:
 
 ## 16. Security requirements
 
-See `docs/SECURITY.md` and `docs/THREAT_MODEL.md`.
-
 Mandatory before public production use:
 
 - tenant-scoped authorization,
@@ -1040,7 +1038,7 @@ MVP is complete when:
 - lint/typecheck/test
 - CI
 - local Postgres/Redis
-- AGENTS.md + Cursor rules
+- repository engineering standards
 
 ### Milestone 1 — Provider core
 - provider interface
@@ -1216,5 +1214,3 @@ None of these should block the provider-neutral contract.
 - Cloudflare Browser Run HTTP session management: https://developers.cloudflare.com/browser-run/cdp/session-management/
 - Cloudflare Browser Run limits: https://developers.cloudflare.com/browser-run/limits/
 - Cloudflare Browser Run Playwright support: https://developers.cloudflare.com/browser-run/playwright/
-- AGENTS.md format: https://agents.md/
-- Cursor project rules: https://docs.cursor.com/context/rules-for-ai

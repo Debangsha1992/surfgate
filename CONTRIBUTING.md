@@ -1,6 +1,6 @@
 # Contributing to SurfGate
 
-Read `AGENTS.md` first.
+Start with the product documentation and relevant architecture decision records in `docs/`.
 
 ## Before opening a change
 

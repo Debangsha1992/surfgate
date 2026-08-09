@@ -1,8 +1,8 @@
-# SurfGate Implementation Plan for Cursor
+# SurfGate Implementation Plan
 
 Use this file as the ordered engineering backlog.
 
-Do not ask Cursor to "build SurfGate" in one prompt. Work through bounded slices and keep `pnpm check` green.
+Work through bounded slices and keep `pnpm check` green.
 
 ---
 
@@ -317,11 +317,3 @@ No automatic replay of unsafe mutating browser actions.
 - key rotation
 - retention jobs
 - security review
-
----
-
-## Suggested first Cursor task
-
-Use the prompt in `docs/CURSOR_WORKFLOW.md` titled **Prompt 1 — Bootstrap**.
-
-Do not begin Cloudflare integration before provider core and conformance interfaces exist.
