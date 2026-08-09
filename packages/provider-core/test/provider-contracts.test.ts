@@ -207,6 +207,15 @@ describe('provider lifecycle contracts', () => {
     ).toBe(false)
   })
 
+  it('returns validation failure instead of throwing for malformed websocket endpoints', () => {
+    expect(
+      ProviderSessionSchema.safeParse({
+        ...VALID_SESSION,
+        connection: { ...VALID_SESSION.connection, endpoint: 'not a URL' },
+      }).success,
+    ).toBe(false)
+  })
+
   it.each(['terminated', 'already_terminated'] as const)(
     'validates the %s termination result',
     (status) => {

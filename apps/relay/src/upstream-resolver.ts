@@ -27,8 +27,13 @@ export function createUpstreamConnectionResolver(
           session.providerSessionReferenceEncrypted,
           { tenantID: session.tenantID, sessionID: session.sessionID },
         )
+        const protectedExpiresAtMs = Date.parse(protectedSession.session.expiresAt)
+        const sessionExpiresAtMs =
+          session.expiresAt === null ? Number.NaN : Date.parse(session.expiresAt)
         if (
-          protectedSession.session.expiresAt !== session.expiresAt ||
+          !Number.isFinite(protectedExpiresAtMs) ||
+          !Number.isFinite(sessionExpiresAtMs) ||
+          protectedExpiresAtMs !== sessionExpiresAtMs ||
           protectedSession.session.reference.providerID !== protectedSession.candidate.providerID ||
           protectedSession.session.reference.runtimeClass !==
             protectedSession.candidate.runtimeClass

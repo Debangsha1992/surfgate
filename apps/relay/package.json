@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "pnpm build && node --enable-source-maps dist/main.js",
+    "dev": "pnpm --filter @surfgate/relay... build && node --enable-source-maps dist/main.js",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --config ../../vitest.config.ts --root . --exclude '**/*.integration.test.ts' --exclude '**/*.load.test.ts' --exclude '**/*.live.test.ts'",
     "test:integration": "vitest run --config ../../vitest.config.ts --root . integration",

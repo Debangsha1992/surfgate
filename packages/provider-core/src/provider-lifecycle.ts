@@ -10,6 +10,7 @@ const HTTPTargetURLSchema = z
   .string()
   .url()
   .refine((value) => {
+    if (!URL.canParse(value)) return false
     const protocol = new URL(value).protocol
     return protocol === 'http:' || protocol === 'https:'
   }, 'Target URL must use HTTP or HTTPS')
@@ -18,6 +19,7 @@ const InternalWebSocketEndpointSchema = z
   .string()
   .url()
   .refine((value) => {
+    if (!URL.canParse(value)) return false
     const endpoint = new URL(value)
     return (
       (endpoint.protocol === 'ws:' || endpoint.protocol === 'wss:') &&

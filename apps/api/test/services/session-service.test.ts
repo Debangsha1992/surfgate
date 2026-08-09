@@ -224,6 +224,9 @@ function fixture(
     get targetPolicyChecks() {
       return targetPolicyChecks
     },
+    replaceSessionForTest(value: Session): void {
+      session = value
+    },
     kitesurf,
     isSessionRevoked,
     revokeSession,
@@ -253,6 +256,17 @@ describe('SessionService', () => {
     })
     expect(response.token).not.toContain('cloudflare')
     expect(setup.isSessionRevoked).toHaveBeenCalledWith(context.tenantID, created.session.id)
+  })
+
+  it('fails closed when an active relay session has no finite expiry', async () => {
+    const setup = fixture()
+    const created = await setup.service.create(context, {}, 'relay-token-invalid-expiry')
+    setup.replaceSessionForTest({ ...setup.session, expiresAt: null } as unknown as Session)
+
+    await expect(setup.service.issueRelayToken(context, created.session.id)).rejects.toMatchObject({
+      code: 'SESSION_EXPIRED',
+      statusCode: 409,
+    })
   })
 
   it('publishes relay revocation before completing provider termination', async () => {

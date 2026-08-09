@@ -76,6 +76,10 @@ export class BoundedMessagePump {
     this.#closed = true
     this.#queue.length = 0
     this.#queuedBytes = 0
+    if (this.#paused) {
+      this.#source.resume()
+      this.#paused = false
+    }
   }
 
   #drain(): void {
@@ -91,7 +95,7 @@ export class BoundedMessagePump {
     this.#sending = true
     this.#target.send(message.data, { binary: message.binary }, (error?: Error) => {
       this.#sending = false
-      this.#queuedBytes -= message.bytes
+      if (!this.#closed) this.#queuedBytes -= message.bytes
       if (error !== undefined && error !== null) {
         this.close()
         this.#onFailure('UPSTREAM_CLOSED')

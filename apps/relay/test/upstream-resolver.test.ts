@@ -61,6 +61,33 @@ describe('upstream connection resolver', () => {
     expect(JSON.stringify(record)).not.toContain('provider-secret')
   })
 
+  it('accepts equivalent provider expiry instants with different offsets', () => {
+    const resolver = createUpstreamConnectionResolver({
+      protector: {
+        encrypt: () => 'unused',
+        decrypt: () =>
+          ProtectedProviderSessionSchema.parse({
+            candidate: {
+              candidateID: 'cloudflare-browser-run::chromium::-::=browser-run-chromium',
+              providerID: 'cloudflare-browser-run',
+              runtimeClass: 'chromium',
+              configProfile: 'browser-run-chromium',
+            },
+            session: {
+              ...providerSession,
+              expiresAt: '2026-08-09T05:40:00.000+05:30',
+            },
+          }),
+      },
+      resolveProviderConnection: (session) => ({
+        endpoint: session.connection.endpoint,
+        headers: {},
+      }),
+    })
+
+    expect(() => resolver.resolve(record)).not.toThrow()
+  })
+
   it('returns only sanitized failures for missing or invalid protected references', () => {
     const resolver = createUpstreamConnectionResolver({
       protector: {

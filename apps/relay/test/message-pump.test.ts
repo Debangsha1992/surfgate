@@ -61,18 +61,37 @@ describe('BoundedMessagePump', () => {
     expect(onLimit).toHaveBeenCalledTimes(2)
   })
 
-  it('normalizes destination send failures', () => {
+  it('normalizes destination transport send failures', () => {
+    const target = new FakeSocket()
+    const onFailure = vi.fn()
     const pump = new BoundedMessagePump(
       new FakeSocket(),
-      new FakeSocket(),
+      target,
       { maxMessageBytes: 32, maxQueuedBytes: 64 },
-      vi.fn(),
+      onFailure,
     )
-    expect(new RelayStreamLimitError('MESSAGE_TOO_LARGE')).toMatchObject({
-      code: 'MESSAGE_TOO_LARGE',
+    pump.enqueue(Buffer.from('message'), false)
+
+    target.callbacks.shift()?.(new Error('synthetic transport failure'))
+
+    expect(onFailure).toHaveBeenCalledWith('UPSTREAM_CLOSED')
+  })
+
+  it('resumes a paused source when closing with an in-flight send', () => {
+    const source = new FakeSocket()
+    const target = new FakeSocket()
+    const pump = new BoundedMessagePump(source, target, {
+      maxMessageBytes: 32,
+      maxQueuedBytes: 64,
     })
+    pump.enqueue(Buffer.from('one'), false)
+    pump.enqueue(Buffer.from('two'), false)
+    expect(source.pause).toHaveBeenCalledOnce()
+
     pump.close()
-    expect(() => pump.enqueue(Buffer.from('ignored'), false)).not.toThrow()
+
+    expect(source.resume).toHaveBeenCalledOnce()
+    expect(() => target.callbacks.shift()?.()).not.toThrow()
   })
 
   it('delivers through real WebSocket transports', async () => {

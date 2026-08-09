@@ -44,7 +44,8 @@ export async function authorizeRelaySession(
     throw new RelayAuthorizationError('SESSION_NOT_CONNECTABLE')
   }
   const now = dependencies.now ?? (() => new Date())
-  if (session.expiresAt === null || Date.parse(session.expiresAt) <= now().getTime()) {
+  const expiresAtMs = session.expiresAt === null ? Number.NaN : Date.parse(session.expiresAt)
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now().getTime()) {
     throw new RelayAuthorizationError('SESSION_EXPIRED')
   }
   try {

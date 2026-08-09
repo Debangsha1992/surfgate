@@ -51,6 +51,9 @@ function coordinator() {
   }
   return {
     value,
+    expireController(): void {
+      controllerOwner = undefined
+    },
     revoke(): void {
       revocationListener?.({ tenantID: TENANT_ID, sessionID: SESSION_ID })
     },
@@ -248,6 +251,39 @@ describe('relay server integration', () => {
       const second = connect(port)
       await expect(waitUnexpectedStatus(second)).resolves.toBe(409)
       first.terminate()
+    } finally {
+      await upstream.close()
+    }
+  })
+
+  it('keeps a replacement connection registered when the previous connection closes', async () => {
+    const upstream = await upstreamEchoServer()
+    try {
+      const { coordination, port } = await startRelay(upstream.url, {
+        authorizationCheckIntervalMs: 5_000,
+        leaseTTLms: 5_000,
+      })
+      const first = connect(port)
+      await waitOpen(first)
+      coordination.expireController()
+      const replacement = connect(port)
+      await waitOpen(replacement)
+
+      first.terminate()
+      await waitClose(first)
+      coordination.revoke()
+
+      await vi.waitFor(() => expect(replacement.readyState).toBe(WebSocket.CLOSED))
+    } finally {
+      await upstream.close()
+    }
+  })
+
+  it('rejects a malformed session expiry before connecting upstream', async () => {
+    const upstream = await upstreamEchoServer()
+    try {
+      const { port } = await startRelay(upstream.url, {}, 'not-a-timestamp')
+      await expect(waitUnexpectedStatus(connect(port))).resolves.toBe(503)
     } finally {
       await upstream.close()
     }

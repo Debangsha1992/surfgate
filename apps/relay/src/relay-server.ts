@@ -35,6 +35,7 @@ const CLOSE_CODES: Readonly<Record<RelayFailureCode, number>> = Object.freeze({
   SESSION_REVOKED: 4403,
   CONNECTION_CONFLICT: 4409,
   UPSTREAM_CONNECT_FAILED: 4502,
+  CLIENT_CLOSED: 1000,
   UPSTREAM_CLOSED: 4502,
   MESSAGE_TOO_LARGE: 4400,
   BACKPRESSURE_LIMIT: 4429,
@@ -61,6 +62,7 @@ export interface RelayServer {
 }
 
 type ActiveRelay = Readonly<{
+  ownerID: string
   tenantID: AuthorizedRelaySession['tenantID']
   sessionID: AuthorizedRelaySession['sessionID']
   close(code: RelayFailureCode): void
@@ -362,7 +364,7 @@ export function createRelayServer(
         for (const timer of timers) clearInterval(timer)
         clientToUpstream.close()
         upstreamToClient.close()
-        active.delete(activeKey)
+        if (active.get(activeKey)?.ownerID === ownerID) active.delete(activeKey)
         safeTelemetry(() => {
           telemetry.setActiveConnections(active.size)
           telemetry.recordConnection({
@@ -440,8 +442,8 @@ export function createRelayServer(
       )
       client.on('message', (raw, binary) => {
         lastActivity = Date.now()
-        const data = messageBuffer(raw)
         try {
+          const data = messageBuffer(raw)
           clientToUpstream.enqueue(data, binary)
           safeTelemetry(() =>
             telemetry.recordTraffic({
@@ -456,8 +458,8 @@ export function createRelayServer(
       })
       connectedUpstream.on('message', (raw, binary) => {
         lastActivity = Date.now()
-        const data = messageBuffer(raw)
         try {
+          const data = messageBuffer(raw)
           upstreamToClient.enqueue(data, binary)
         } catch (error: unknown) {
           if (!(error instanceof RelayStreamLimitError)) closeBoth('INTERNAL_ERROR')
@@ -465,7 +467,7 @@ export function createRelayServer(
       })
       client.on('close', () => {
         clientClosed = true
-        closeBoth('UPSTREAM_CLOSED')
+        closeBoth('CLIENT_CLOSED')
         finalizeIfClosed()
       })
       connectedUpstream.on('close', () => {
@@ -490,7 +492,12 @@ export function createRelayServer(
         ),
       )
       const absoluteDeadline = Date.now() + config.absoluteTimeoutMs
-      const sessionDeadline = Date.parse(authorized.expiresAt!)
+      const sessionDeadline =
+        authorized.expiresAt === null ? Number.NaN : Date.parse(authorized.expiresAt)
+      if (!Number.isFinite(sessionDeadline)) {
+        closeBoth('SESSION_EXPIRED')
+        return
+      }
       timers.push(
         setInterval(
           () => {
@@ -535,6 +542,7 @@ export function createRelayServer(
         }, config.authorizationCheckIntervalMs),
       )
       active.set(activeKey, {
+        ownerID,
         tenantID: authorized.tenantID,
         sessionID: authorized.sessionID,
         close: closeBoth,

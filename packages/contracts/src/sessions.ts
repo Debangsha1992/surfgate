@@ -128,6 +128,10 @@ const SurfGateRelayWebSocketURLSchema = z
   .url()
   .max(2_048)
   .superRefine((value, context) => {
+    if (!URL.canParse(value)) {
+      context.addIssue({ code: 'custom', message: 'Relay URL is invalid.' })
+      return
+    }
     const url = new URL(value)
     if (
       (url.protocol !== 'ws:' && url.protocol !== 'wss:') ||

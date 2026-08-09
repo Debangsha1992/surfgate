@@ -64,7 +64,9 @@ describe('relay token service', () => {
   it('rejects an invalid signature without exposing token contents', () => {
     const service = createRelayTokenService(SIGNING, { now: () => NOW })
     const issued = service.issue({ tenantID: TENANT_ID, sessionID: SESSION_ID, ttlSeconds: 60 })
-    const tampered = `${issued.token.slice(0, -1)}A`
+    const finalCharacter = issued.token.at(-1)
+    const replacement = finalCharacter === 'A' ? 'E' : 'A'
+    const tampered = `${issued.token.slice(0, -1)}${replacement}`
 
     try {
       service.verify(tampered)

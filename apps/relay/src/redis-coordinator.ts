@@ -6,6 +6,7 @@ import { z } from 'zod'
 import type { RelayRevocationReader } from './relay-types.js'
 
 const COMMAND_TIMEOUT_MS = 5_000
+const MAX_RECONNECT_ATTEMPTS = 5
 const REVOCATION_CHANNEL = 'surfgate:relay:revocations:v1'
 const RENEW_SCRIPT = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -25,6 +26,13 @@ const RevocationMessageSchema = z
   .readonly()
 
 export type RelayRevocationMessage = z.infer<typeof RevocationMessageSchema>
+
+export function relayRedisReconnectDelay(retries: number): number | Error {
+  if (retries >= MAX_RECONNECT_ATTEMPTS) {
+    return new Error('Redis reconnection attempts exhausted.')
+  }
+  return Math.min(100 * 2 ** retries, 1_000)
+}
 
 export interface RelayCoordinator extends RelayRevocationReader {
   acquireController(
@@ -71,7 +79,7 @@ function revokedKey(tenantID: TenantID, sessionID: SessionID): string {
 export function createRelayCoordinator(config: RedisConfig): RelayCoordinator {
   const client = createClient({
     url: config.url.href,
-    socket: { connectTimeout: 5_000, reconnectStrategy: false },
+    socket: { connectTimeout: 5_000, reconnectStrategy: relayRedisReconnectDelay },
   })
   const subscriber = client.duplicate()
   client.on('error', () => undefined)

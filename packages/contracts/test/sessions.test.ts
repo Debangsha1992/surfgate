@@ -120,4 +120,14 @@ describe('v1 session contracts', () => {
       }).success,
     ).toBe(false)
   })
+
+  it('returns validation failure instead of throwing for malformed relay URLs', () => {
+    const result = RelayTokenResponseSchema.safeParse({
+      webSocketUrl: 'not a URL',
+      token: `sgrt.v1.local.${'A'.repeat(64)}.${'B'.repeat(43)}`,
+      expiresAt: '2026-08-09T00:01:00.000Z',
+    })
+
+    expect(result.success).toBe(false)
+  })
 })

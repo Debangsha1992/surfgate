@@ -364,7 +364,8 @@ export class SessionService {
     )
     if (session === null) throw new ControlPlaneHTTPError('SESSION_NOT_FOUND', 404)
     const nowMs = this.#now().getTime()
-    if (session.expiresAt !== null && Date.parse(session.expiresAt) <= nowMs) {
+    const expiresAtMs = session.expiresAt === null ? Number.NaN : Date.parse(session.expiresAt)
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) {
       throw new ControlPlaneHTTPError('SESSION_EXPIRED', 409)
     }
     if (session.status !== 'active') {
@@ -378,8 +379,8 @@ export class SessionService {
       if (error instanceof ControlPlaneHTTPError) throw error
       throw new ControlPlaneHTTPError('INTERNAL_DEPENDENCY_UNAVAILABLE', 503)
     }
-    const remainingSeconds = Math.floor((Date.parse(session.expiresAt!) - nowMs) / 1_000)
-    if (remainingSeconds < 1) {
+    const remainingSeconds = Math.floor((expiresAtMs - nowMs) / 1_000)
+    if (!Number.isFinite(remainingSeconds) || remainingSeconds < 1) {
       throw new ControlPlaneHTTPError('SESSION_EXPIRED', 409)
     }
     const issued = relay.tokens.issue({

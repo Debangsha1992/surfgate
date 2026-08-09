@@ -8,6 +8,7 @@ import { z } from 'zod'
 
 const ENVELOPE_PATTERN =
   /^psr\.v1\.([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{22})$/u
+const KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u
 
 export type ProviderSessionReferenceContext = Readonly<{
   tenantID: TenantID
@@ -41,6 +42,9 @@ function associatedData(context: ProviderSessionReferenceContext): Buffer {
 export function createProviderSessionReferenceProtector(
   config: ProviderSessionEncryptionConfig,
 ): ProviderSessionReferenceProtector {
+  if (!KEY_ID_PATTERN.test(config.keyID)) {
+    throw new Error('Provider session encryption key ID is invalid.')
+  }
   return Object.freeze({
     encrypt(
       session: ProviderSession,
