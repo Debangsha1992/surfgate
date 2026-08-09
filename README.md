@@ -32,7 +32,7 @@ The control plane authenticates clients, validates requests, applies quotas and 
 
 ## Current Status
 
-The repository implements SurfGate through **SG-0507**, including:
+The current implementation includes:
 
 - Node.js 24, pnpm, Turbo, strict TypeScript, ESLint, Prettier, and Vitest monorepo tooling
 - Runtime-validated typed configuration
@@ -68,8 +68,6 @@ packages/
   security/               Target URL and network policy primitives
   observability/          Structured control-plane telemetry interfaces
   testing/                Fake provider and shared conformance suite
-
-docs/                     Product, API, routing, operations, and ADR documentation
 ```
 
 ## Prerequisites
@@ -98,7 +96,12 @@ pnpm dev
 
 Keep `.env` local. Cloudflare account credentials are optional for ordinary builds and deterministic tests; they are required only for separately gated live Kitesurf, Chromium, or control-plane provider tests.
 
-See [Local Development](docs/LOCAL_DEVELOPMENT.md) for test-database setup, infrastructure lifecycle commands, and configuration details.
+Check or stop local infrastructure with:
+
+```bash
+docker compose -f docker-compose.dev.yml ps
+docker compose -f docker-compose.dev.yml down
+```
 
 ## Quality Gates
 
@@ -120,7 +123,17 @@ pnpm --filter @surfgate/router test:golden
 pnpm --filter @surfgate/security test
 ```
 
-Integration tests require the isolated PostgreSQL test database and Redis described in [Local Development](docs/LOCAL_DEVELOPMENT.md). Live provider tests are gated separately and are not part of normal CI or `pnpm check`.
+Integration tests require Redis and an isolated PostgreSQL database whose name ends in `_test`. Create the local test database once and run the suite with:
+
+```bash
+docker compose -f docker-compose.dev.yml exec -T postgres \
+  createdb -U surfgate surfgate_test
+
+TEST_DATABASE_URL=postgresql://surfgate:surfgate@127.0.0.1:5432/surfgate_test \
+  pnpm --filter @surfgate/api test:integration
+```
+
+Live provider tests are gated separately and are not part of normal CI or `pnpm check`.
 
 ## API
 
@@ -133,7 +146,7 @@ Implemented HTTP endpoints:
 - `GET /v1/sessions/:sessionId`
 - `DELETE /v1/sessions/:sessionId`
 
-Session endpoints require tenant-scoped bearer authentication. Session creation also requires an `Idempotency-Key` header. See the [API contract](docs/API.md) for request, response, error, quota, and idempotency semantics.
+Session endpoints require tenant-scoped bearer authentication. Session creation also requires an `Idempotency-Key` header. The service publishes its runtime-schema-derived OpenAPI contract at `/openapi.json`.
 
 ## Routing
 
@@ -144,7 +157,7 @@ Routing is deterministic and explainable:
 3. Stable reason codes and tie-breaking make decisions replayable.
 4. A classified allocation failure may trigger at most one cross-runtime fallback.
 
-Required capabilities can never be overridden by scoring. See the [routing specification](docs/ROUTING.md) for the complete `router-v1` policy.
+Required capabilities can never be overridden by scoring. The initial `router-v1` policy prefers Kitesurf when compatible and healthy, while Chromium remains the broader compatibility path.
 
 ## Security
 
@@ -158,16 +171,3 @@ The current control plane is designed so that:
 - SurfGate does not provide CAPTCHA bypass, stealth plugins, TLS fingerprint spoofing, or other anti-bot evasion features.
 
 The CDP relay is not yet available; clients never receive an insecure direct-provider connection as a temporary substitute.
-
-## Documentation
-
-- [Product Requirements](docs/PRD.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [API Contract](docs/API.md)
-- [Routing Specification](docs/ROUTING.md)
-- [Local Development](docs/LOCAL_DEVELOPMENT.md)
-- [Testing](docs/TESTING.md)
-- [Observability](docs/OBSERVABILITY.md)
-- [Operations](docs/OPERATIONS.md)
-- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md)
-- [Architecture Decisions](docs/adr/)

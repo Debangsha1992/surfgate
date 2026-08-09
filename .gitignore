@@ -16,3 +16,12 @@ node_modules/
 dist/
 coverage/
 *.log
+
+# Internal agent, editor, and engineering guidance
+.codex/
+.cursor/
+.vscode/
+/pet-project1/
+docs/
+*.md
+!/README.md
