@@ -19,6 +19,7 @@ flowchart TD
     C[Chromium Provider]
     DB[(PostgreSQL)]
     Redis[(Redis)]
+    Relay[Authenticated CDP Relay]
 
     Client --> API
     API --> Router
@@ -26,6 +27,11 @@ flowchart TD
     Router --> C
     API --> DB
     API --> Redis
+    Client --> Relay
+    Relay --> K
+    Relay --> C
+    Relay --> DB
+    Relay --> Redis
 ```
 
 The control plane authenticates clients, validates requests, applies quotas and idempotency, records routing decisions, allocates through the provider interface, persists session state, and emits audit and telemetry events. The router remains pure domain logic and never performs network or database operations.
@@ -46,15 +52,19 @@ The current implementation includes:
 - Authenticated session creation, inspection, and idempotent termination
 - Durable idempotency, concurrent-session quotas, Redis request-rate limiting, audit events, and telemetry hooks
 - Runtime-schema-coupled OpenAPI output
+- Short-lived tenant/session-scoped relay credentials
+- Independently deployable authenticated CDP WebSocket relay
+- One-controller-per-session Redis coordination and distributed revocation
+- Bounded bidirectional streaming with frame, queue, idle, session, and absolute limits
 
-The WebSocket/CDP relay and managed task execution are not implemented yet. The API does not expose upstream provider WebSocket endpoints or placeholder relay credentials.
+Managed task execution is not implemented yet. Clients connect to the SurfGate relay and never receive upstream provider WebSocket endpoints or Cloudflare credentials.
 
 ## Repository Structure
 
 ```text
 apps/
   api/                    Fastify control plane and persistence
-  relay/                  Relay package boundary; implementation pending
+  relay/                  Authenticated bounded CDP data plane
   worker/                 Managed-task package boundary; implementation pending
 
 packages/
@@ -65,8 +75,8 @@ packages/
   provider-cloudflare/    Private shared Cloudflare transport
   provider-kitesurf/      Kitesurf adapter
   provider-chromium/      Chromium adapter
-  security/               Target URL and network policy primitives
-  observability/          Structured control-plane telemetry interfaces
+  security/               Target policy, relay tokens, and protected references
+  observability/          Structured control-plane and relay telemetry interfaces
   testing/                Fake provider and shared conformance suite
 ```
 
@@ -87,7 +97,7 @@ cp .env.example .env
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-Before starting the API, set `SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY` in the local `.env` to a securely generated base64-encoded 32-byte value. Then run:
+Before starting the API or relay, set both `SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY` and `SURFGATE_RELAY_TOKEN_SIGNING_KEY` in the local `.env` to independently generated base64-encoded 32-byte values. Then run:
 
 ```bash
 pnpm --filter @surfgate/api db:migrate
@@ -121,6 +131,7 @@ pnpm test:integration
 pnpm test:conformance
 pnpm --filter @surfgate/router test:golden
 pnpm --filter @surfgate/security test
+pnpm test:relay-load
 ```
 
 Integration tests require Redis and an isolated PostgreSQL database whose name ends in `_test`. Create the local test database once and run the suite with:
@@ -145,8 +156,23 @@ Implemented HTTP endpoints:
 - `POST /v1/sessions`
 - `GET /v1/sessions/:sessionId`
 - `DELETE /v1/sessions/:sessionId`
+- `POST /v1/sessions/:sessionId/relay-token`
 
 Session endpoints require tenant-scoped bearer authentication. Session creation also requires an `Idempotency-Key` header. The service publishes its runtime-schema-derived OpenAPI contract at `/openapi.json`.
+
+Only an active, unexpired session can obtain a relay credential. The credential is short-lived, bound to one tenant and one session, and is accepted by the relay at `WS /v1/sessions/:sessionId/cdp` only through an `Authorization: Bearer` upgrade header. It is never placed in a URL or WebSocket subprotocol. One controller connection is permitted per session. Disconnecting the client closes only the relay transport; deleting or expiring the session revokes relay access and retains provider termination in the control plane.
+
+The relay exposes separate `/health/live` and `/health/ready` endpoints. During shutdown it stops upgrades, closes active client/upstream pairs within the configured drain bound, releases Redis ownership, and exits. New connections fail closed when PostgreSQL or Redis authorization state is unavailable.
+
+### Relay operations
+
+- Drain a relay instance through its normal `SIGTERM`/`SIGINT` shutdown path; the configured drain timeout bounds graceful client/upstream closure before hard cleanup.
+- Treat PostgreSQL and Redis readiness failures as authorization-safety failures. Restore the dependency before accepting new relay connections rather than bypassing the check.
+- Investigate `UPSTREAM_CONNECT_FAILED` using provider health and server-side Cloudflare configuration. SurfGate deliberately omits upstream response bodies, authorization headers, and provider URLs from client errors and logs.
+- Rotate `SURFGATE_RELAY_TOKEN_SIGNING_KEY` together with `SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID` as a coordinated deployment. Existing short-lived credentials become invalid when the old key is removed, so schedule rotation around the configured token TTL (maximum five minutes).
+- Keep provider-session encryption-key rotation separate from relay-token signing-key rotation; neither key may be reused for the other purpose.
+
+The integration suite includes a browser-download-free Playwright Core `connectOverCDP` compatibility test. It verifies that a standard CDP client can authenticate to SurfGate through an upgrade header without learning the provider authorization credential.
 
 ## Routing
 
@@ -167,7 +193,10 @@ The current control plane is designed so that:
 - API keys are shown only at creation and stored as salted one-way hashes.
 - Durable resource access and repositories are tenant-scoped.
 - Sensitive provider-session references are encrypted before persistence.
+- Relay tokens are signed, short-lived, audience-bound, and checked against current durable session state.
+- Upstream WebSocket URLs and authorization headers remain inside the relay data plane.
+- Frame and queue limits prevent slow peers from creating unbounded relay buffers.
 - Authentication, policy, quota, and public error behavior use validated stable contracts.
 - SurfGate does not provide CAPTCHA bypass, stealth plugins, TLS fingerprint spoofing, or other anti-bot evasion features.
 
-The CDP relay is not yet available; clients never receive an insecure direct-provider connection as a temporary substitute.
+Raw CDP frames, page content, cookies, relay tokens, and provider URLs are never included in normal logs. SurfGate does not migrate or replay an active CDP session across runtimes.

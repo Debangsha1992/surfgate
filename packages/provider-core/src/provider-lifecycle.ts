@@ -10,6 +10,7 @@ const HTTPTargetURLSchema = z
   .string()
   .url()
   .refine((value) => {
+    if (!URL.canParse(value)) return false
     const protocol = new URL(value).protocol
     return protocol === 'http:' || protocol === 'https:'
   }, 'Target URL must use HTTP or HTTPS')
@@ -18,6 +19,7 @@ const InternalWebSocketEndpointSchema = z
   .string()
   .url()
   .refine((value) => {
+    if (!URL.canParse(value)) return false
     const endpoint = new URL(value)
     return (
       (endpoint.protocol === 'ws:' || endpoint.protocol === 'wss:') &&
@@ -85,6 +87,18 @@ export const InternalProviderConnectionSchema = z
   .strict()
   .readonly()
 export type InternalProviderConnection = z.infer<typeof InternalProviderConnectionSchema>
+
+export const ResolvedProviderConnectionSchema = z
+  .object({
+    endpoint: InternalWebSocketEndpointSchema,
+    headers: z
+      .object({ Authorization: z.string().min(1).max(8_192).optional() })
+      .strict()
+      .readonly(),
+  })
+  .strict()
+  .readonly()
+export type ResolvedProviderConnection = z.infer<typeof ResolvedProviderConnectionSchema>
 
 const ProviderSessionMetadataSchema = z
   .object({

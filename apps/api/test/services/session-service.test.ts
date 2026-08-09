@@ -6,6 +6,7 @@ import {
   APIKeyIDSchema,
   SessionIDSchema,
   RoutingDecisionIDSchema,
+  RelayTokenSchema,
 } from '@surfgate/contracts'
 import { ProviderDescriptorSchema } from '@surfgate/provider-core'
 import {
@@ -20,12 +21,13 @@ import { ProviderRegistry } from '../../src/providers/provider-registry.js'
 import { SessionService } from '../../src/services/session-service.js'
 import { RateLimitDependencyError, RateLimitExceededError } from '../../src/quota/rate-limiter.js'
 import { TargetPolicyError } from '@surfgate/security'
+import type { ProtectedProviderSession } from '@surfgate/security'
 
 const context: AuthenticatedTenantContext = Object.freeze({
   tenantID: TenantIDSchema.parse('ten_01ARZ3NDEKTSV4RRFFQ69G5FAV'),
   apiKeyID: APIKeyIDSchema.parse('key_01ARZ3NDEKTSV4RRFFQ69G5FAV'),
   requestID: RequestIDSchema.parse('req_01ARZ3NDEKTSV4RRFFQ69G5FAV'),
-  scopes: ['sessions:write', 'sessions:read', 'sessions:terminate'],
+  scopes: ['sessions:write', 'sessions:read', 'sessions:terminate', 'sessions:connect'],
 })
 
 function provider(
@@ -67,6 +69,9 @@ function fixture(
   let recoveryReadShouldFail = false
   let auditWrites = 0
   let targetPolicyChecks = 0
+  const isSessionRevoked = vi.fn(() => Promise.resolve(false))
+  const revokeSession = vi.fn(() => Promise.resolve())
+  let protectedProviderSession: ProtectedProviderSession | undefined
   const attempts: Array<{ attemptNumber: number; status?: string }> = []
   const sessions = {
     insertSession: (value: Session) => Promise.resolve((session = value)),
@@ -170,9 +175,13 @@ function fixture(
     },
     registry: new ProviderRegistry([kitesurf, chromium]),
     protector: {
-      encrypt: () => 'psr.v1.v1.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA',
+      encrypt: (providerSession, candidate) => {
+        protectedProviderSession = { session: providerSession, candidate }
+        return 'psr.v1.v1.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA'
+      },
       decrypt: () => {
-        throw new Error('not needed')
+        if (protectedProviderSession === undefined) throw new Error('missing protected session')
+        return protectedProviderSession
       },
     },
     config: {
@@ -188,6 +197,20 @@ function fixture(
       ownerToken: () => 'A'.repeat(32),
     },
     now: () => new Date('2026-08-09T00:00:00.000Z'),
+    relay: {
+      tokens: {
+        issue: () => ({
+          token: RelayTokenSchema.parse(`sgrt.v1.v1.${'A'.repeat(64)}.${'B'.repeat(43)}`),
+          expiresAt: '2026-08-09T00:01:00.000Z',
+        }),
+        verify: () => {
+          throw new Error('not used by the API')
+        },
+      },
+      authorization: { isSessionRevoked, revokeSession },
+      publicURL: new URL('ws://127.0.0.1:8081'),
+      tokenTTLSeconds: 60,
+    },
   })
   return {
     service,
@@ -201,7 +224,12 @@ function fixture(
     get targetPolicyChecks() {
       return targetPolicyChecks
     },
+    replaceSessionForTest(value: Session): void {
+      session = value
+    },
     kitesurf,
+    isSessionRevoked,
+    revokeSession,
   }
 }
 
@@ -215,6 +243,43 @@ describe('SessionService', () => {
     })
     expect(JSON.stringify(result)).not.toContain('websocket')
     expect(JSON.stringify(result)).not.toContain('psr.v1')
+  })
+
+  it('issues only a short-lived SurfGate relay credential for an active tenant session', async () => {
+    const setup = fixture()
+    const created = await setup.service.create(context, {}, 'relay-token-session')
+    const response = await setup.service.issueRelayToken(context, created.session.id)
+
+    expect(response).toMatchObject({
+      webSocketUrl: `ws://127.0.0.1:8081/v1/sessions/${created.session.id}/cdp`,
+      expiresAt: '2026-08-09T00:01:00.000Z',
+    })
+    expect(response.token).not.toContain('cloudflare')
+    expect(setup.isSessionRevoked).toHaveBeenCalledWith(context.tenantID, created.session.id)
+  })
+
+  it('fails closed when an active relay session has no finite expiry', async () => {
+    const setup = fixture()
+    const created = await setup.service.create(context, {}, 'relay-token-invalid-expiry')
+    setup.replaceSessionForTest({ ...setup.session, expiresAt: null } as unknown as Session)
+
+    await expect(setup.service.issueRelayToken(context, created.session.id)).rejects.toMatchObject({
+      code: 'SESSION_EXPIRED',
+      statusCode: 409,
+    })
+  })
+
+  it('publishes relay revocation before completing provider termination', async () => {
+    const setup = fixture()
+    const created = await setup.service.create(context, {}, 'terminate-relay-session')
+    const terminated = await setup.service.terminate(context, created.session.id)
+
+    expect(terminated.session.status).toBe('terminated')
+    expect(setup.revokeSession).toHaveBeenCalledWith({
+      tenantID: context.tenantID,
+      sessionID: created.session.id,
+      ttlSeconds: 300,
+    })
   })
 
   it('replays a completed request before consuming quota or repeating allocation', async () => {

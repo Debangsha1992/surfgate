@@ -36,6 +36,7 @@ describe('API server lifecycle', () => {
       S3_REGION: 'auto',
       S3_BUCKET: 'surfgate-test',
       SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
+      SURFGATE_RELAY_TOKEN_SIGNING_KEY: Buffer.alloc(32, 2).toString('base64'),
     })
     const database = new FakeDatabase()
     const listen = vi.fn(() => Promise.resolve())
@@ -64,6 +65,7 @@ describe('API server lifecycle', () => {
         S3_REGION: 'auto',
         S3_BUCKET: 'surfgate-test',
         SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
+        SURFGATE_RELAY_TOKEN_SIGNING_KEY: Buffer.alloc(32, 2).toString('base64'),
       })
       const server = createAPIServer(config, {
         database: new FakeDatabase(),
@@ -71,6 +73,8 @@ describe('API server lifecycle', () => {
         listen: () => Promise.resolve(),
         redis: {
           increment: () => Promise.resolve(1),
+          isSessionRevoked: () => Promise.resolve(false),
+          revokeSession: () => Promise.resolve(),
           health: () => Promise.resolve('ready'),
           close: () => new Promise<void>(() => undefined),
         },

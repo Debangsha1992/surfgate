@@ -61,6 +61,15 @@ function fixture() {
         },
       })
     }),
+    issueRelayToken: vi.fn((context: unknown, sessionID: unknown) => {
+      void context
+      void sessionID
+      return Promise.resolve({
+        webSocketUrl: `ws://127.0.0.1:8081/v1/sessions/${publicSession.id}/cdp`,
+        token: `sgrt.v1.v1.${'A'.repeat(64)}.${'B'.repeat(43)}`,
+        expiresAt: '2026-08-09T00:01:00.000Z',
+      })
+    }),
   }
   const authenticate: AuthenticateAPIKey = vi.fn((input: Parameters<AuthenticateAPIKey>[0]) => {
     if (input.authorization === undefined) {
@@ -69,7 +78,12 @@ function fixture() {
     return Promise.resolve({
       tenantID: TenantIDSchema.parse('ten_01ARZ3NDEKTSV4RRFFQ69G5FAV'),
       apiKeyID: APIKeyIDSchema.parse('key_01ARZ3NDEKTSV4RRFFQ69G5FAV'),
-      scopes: ['sessions:read', 'sessions:write', 'sessions:terminate'] as const,
+      scopes: [
+        'sessions:read',
+        'sessions:write',
+        'sessions:terminate',
+        'sessions:connect',
+      ] as const,
       requestID: RequestIDSchema.parse(input.requestID),
     })
   })
@@ -114,13 +128,22 @@ describe('v1 session routes', () => {
       url: `/v1/sessions/${publicSession.id}`,
       headers: { authorization: 'Bearer safe' },
     })
+    const relayToken = await app.inject({
+      method: 'POST',
+      url: `/v1/sessions/${publicSession.id}/relay-token`,
+      headers: { authorization: 'Bearer safe' },
+    })
     expect(create.statusCode).toBe(201)
     expect(get.statusCode).toBe(200)
     expect(remove.statusCode).toBe(200)
+    expect(relayToken.statusCode).toBe(200)
     expect(service.create).toHaveBeenCalledTimes(1)
     expect(service.create.mock.calls[0]?.[3]).toBeInstanceOf(AbortSignal)
     expect(service.terminate.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal)
-    expect(`${create.body}${get.body}${remove.body}`).not.toContain('providerSessionReference')
+    expect(`${create.body}${get.body}${remove.body}${relayToken.body}`).not.toContain(
+      'providerSessionReference',
+    )
+    expect(relayToken.body).not.toContain('api.cloudflare.com')
     await app.close()
   })
 

@@ -114,3 +114,44 @@ export type SessionGetResponse = z.infer<typeof SessionGetResponseSchema>
 
 export const SessionTerminationResponseSchema = SessionCreateResponseSchema
 export type SessionTerminationResponse = z.infer<typeof SessionTerminationResponseSchema>
+
+export const RelayTokenSchema = z
+  .string()
+  .min(64)
+  .max(4_096)
+  .regex(/^sgrt\.v1\.[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/u)
+  .brand<'RelayToken'>()
+export type RelayToken = z.infer<typeof RelayTokenSchema>
+
+const SurfGateRelayWebSocketURLSchema = z
+  .string()
+  .url()
+  .max(2_048)
+  .superRefine((value, context) => {
+    if (!URL.canParse(value)) {
+      context.addIssue({ code: 'custom', message: 'Relay URL is invalid.' })
+      return
+    }
+    const url = new URL(value)
+    if (
+      (url.protocol !== 'ws:' && url.protocol !== 'wss:') ||
+      url.username.length > 0 ||
+      url.password.length > 0 ||
+      url.search.length > 0 ||
+      url.hash.length > 0 ||
+      !/^\/v1\/sessions\/ses_[0-7][0-9A-HJKMNP-TV-Z]{25}\/cdp$/u.test(url.pathname) ||
+      url.hostname === 'api.cloudflare.com'
+    ) {
+      context.addIssue({ code: 'custom', message: 'Relay URL is invalid.' })
+    }
+  })
+
+export const RelayTokenResponseSchema = z
+  .object({
+    webSocketUrl: SurfGateRelayWebSocketURLSchema,
+    token: RelayTokenSchema,
+    expiresAt: z.iso.datetime({ offset: true }),
+  })
+  .strict()
+  .readonly()
+export type RelayTokenResponse = z.infer<typeof RelayTokenResponseSchema>

@@ -35,30 +35,32 @@ export async function runMigrations(database: Database, directory: string): Prom
   const filenames = sqlFilenames.toSorted()
 
   await database.transaction(async (transaction) => {
-    await transaction.query('select pg_advisory_xact_lock($1)', [MIGRATION_LOCK_ID])
     await ensureLedger(transaction)
-    const applied = await transaction.query<AppliedMigrationRow>(
-      'select name, checksum from surfgate_migrations',
-    )
-    const checksums = new Map(applied.map((migration) => [migration.name, migration.checksum]))
+  })
 
-    for (const filename of filenames) {
+  for (const filename of filenames) {
+    await database.transaction(async (transaction) => {
+      await transaction.query('select pg_advisory_xact_lock($1)', [MIGRATION_LOCK_ID])
       const sql = readFileSync(join(directory, filename), 'utf8')
       const expectedChecksum = checksum(sql)
-      const existingChecksum = checksums.get(filename)
+      const applied = await transaction.query<AppliedMigrationRow>(
+        'select name, checksum from surfgate_migrations where name = $1',
+        [filename],
+      )
+      const existingChecksum = applied[0]?.checksum
       if (existingChecksum !== undefined) {
         if (existingChecksum !== expectedChecksum) {
           throw new Error(`Applied migration ${basename(filename)} has changed.`)
         }
-        continue
+        return
       }
       await transaction.query(sql)
       await transaction.query('insert into surfgate_migrations (name, checksum) values ($1, $2)', [
         filename,
         expectedChecksum,
       ])
-    }
-  })
+    })
+  }
 }
 
 export async function runConfiguredMigrations(): Promise<void> {

@@ -42,6 +42,15 @@ const CANDIDATE = RoutingCandidateIdentitySchema.parse({
 })
 
 describe('provider session reference protection', () => {
+  it('rejects key IDs that cannot be represented in an encrypted envelope', () => {
+    expect(() =>
+      createProviderSessionReferenceProtector({
+        key: createSecretKey(Buffer.alloc(32, 7)),
+        keyID: 'invalid key id',
+      }),
+    ).toThrowError('Provider session encryption key ID is invalid.')
+  })
+
   it('round-trips a validated provider session using randomized authenticated encryption', () => {
     const protector = createProviderSessionReferenceProtector({
       key: createSecretKey(Buffer.alloc(32, 3)),

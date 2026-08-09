@@ -84,6 +84,43 @@ importers:
       '@surfgate/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@surfgate/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@surfgate/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@surfgate/provider-cloudflare':
+        specifier: workspace:*
+        version: link:../../packages/provider-cloudflare
+      '@surfgate/provider-core':
+        specifier: workspace:*
+        version: link:../../packages/provider-core
+      '@surfgate/security':
+        specifier: workspace:*
+        version: link:../../packages/security
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+      redis:
+        specifier: ^5.8.2
+        version: 5.12.1
+      ws:
+        specifier: ^8.18.3
+        version: 8.21.3
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.21.0
+        version: 8.21.0
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      playwright-core:
+        specifier: ^1.58.0
+        version: 1.62.1
 
   apps/worker:
     dependencies:
@@ -175,7 +212,23 @@ importers:
         specifier: ^4.0.0
         version: 4.4.3
 
-  packages/security: {}
+  packages/security:
+    dependencies:
+      '@surfgate/config':
+        specifier: workspace:*
+        version: link:../config
+      '@surfgate/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@surfgate/provider-core':
+        specifier: workspace:*
+        version: link:../provider-core
+      '@surfgate/router':
+        specifier: workspace:*
+        version: link:../router
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/testing:
     dependencies:
@@ -640,6 +693,9 @@ packages:
 
   '@types/pg@8.21.0':
     resolution: {integrity: sha512-AYdtudzabjLZgVgRZmAnU8bAnVUXzuJX2IYHeSIiIHm68olD+LgQYCGWdtcNYnP0uq9c4S4NibVG3Ni7VbKW7Q==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@typescript-eslint/eslint-plugin@8.66.0':
     resolution: {integrity: sha512-p088eaGrzYz1s+7cov0aMOCkNGTJlVxF4jgubf28c8L0Cv9Rloj8YBHnv4hXLq6IIEE1AsjNWavO+k+8kP2Y0A==}
@@ -1170,6 +1226,11 @@ packages:
     resolution: {integrity: sha512-r34yH/GlQpKZbU1BvFFqOjhISRo1MNx1tWYsYvmj6KIRHSPMT2+yHOEb1SG6NMvRoHRF0a07kCOox/9yakl1vg==}
     hasBin: true
 
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   postcss@8.5.26:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
     engines: {node: ^10 || ^12 || >=14}
@@ -1453,6 +1514,18 @@ packages:
   word-wrap@1.2.5:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
+
+  ws@8.21.3:
+    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
 
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
@@ -1770,6 +1843,10 @@ snapshots:
       '@types/node': 24.13.3
       pg-protocol: 1.15.0
       pg-types: 2.2.0
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 24.13.3
 
   '@typescript-eslint/eslint-plugin@8.66.0(@typescript-eslint/parser@8.66.0(eslint@9.39.5)(typescript@5.9.3))(eslint@9.39.5)(typescript@5.9.3)':
     dependencies:
@@ -2366,6 +2443,8 @@ snapshots:
       sonic-boom: 4.2.1
       thread-stream: 4.2.0
 
+  playwright-core@1.62.1: {}
+
   postcss@8.5.26:
     dependencies:
       nanoid: 3.3.18
@@ -2634,6 +2713,8 @@ snapshots:
       stackback: 0.0.2
 
   word-wrap@1.2.5: {}
+
+  ws@8.21.3: {}
 
   xtend@4.0.2: {}
 

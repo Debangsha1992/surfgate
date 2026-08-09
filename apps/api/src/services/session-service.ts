@@ -5,6 +5,7 @@ import {
   SessionCreateRequestSchema,
   SessionCreateResponseSchema,
   SessionGetResponseSchema,
+  RelayTokenResponseSchema,
   SessionTerminationResponseSchema,
   SurfGateErrorCodeSchema,
   type SurfGateErrorCode,
@@ -41,7 +42,8 @@ import type { SessionRepository } from '../repositories/session-repository.js'
 import { SessionTransitionConflictError } from '../repositories/session-repository.js'
 import type { ProviderSessionReferenceProtector } from '../security/provider-session-reference.js'
 import type { TargetPolicy } from '@surfgate/security'
-import { TargetPolicyError } from '@surfgate/security'
+import { TargetPolicyError, type RelayTokenService } from '@surfgate/security'
+import type { RelayAuthorizationStore } from '../relay/relay-authorization.js'
 
 import { hashIdempotentRequest } from './idempotency-hash.js'
 import { toPublicSession } from './public-session.js'
@@ -64,6 +66,12 @@ export type SessionServiceDependencies = Readonly<{
   }>
   now?: () => Date
   telemetry?: ControlPlaneTelemetry
+  relay?: Readonly<{
+    tokens: RelayTokenService
+    authorization: RelayAuthorizationStore
+    publicURL: URL
+    tokenTTLSeconds: number
+  }>
 }>
 
 function providerHTTPError(error: ProviderError): ControlPlaneHTTPError {
@@ -345,6 +353,50 @@ export class SessionService {
     return SessionGetResponseSchema.parse({ session: await this.#public(session) })
   }
 
+  async issueRelayToken(context: AuthenticatedTenantContext, sessionID: SessionID) {
+    const relay = this.#dependencies.relay
+    if (relay === undefined) {
+      throw new ControlPlaneHTTPError('INTERNAL_DEPENDENCY_UNAVAILABLE', 503)
+    }
+    const session = await this.#dependencies.sessions.findSessionForTenant(
+      context.tenantID,
+      sessionID,
+    )
+    if (session === null) throw new ControlPlaneHTTPError('SESSION_NOT_FOUND', 404)
+    const nowMs = this.#now().getTime()
+    const expiresAtMs = session.expiresAt === null ? Number.NaN : Date.parse(session.expiresAt)
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) {
+      throw new ControlPlaneHTTPError('SESSION_EXPIRED', 409)
+    }
+    if (session.status !== 'active') {
+      throw new ControlPlaneHTTPError('SESSION_NOT_ACTIVE', 409)
+    }
+    try {
+      if (await relay.authorization.isSessionRevoked(context.tenantID, session.id)) {
+        throw new ControlPlaneHTTPError('SESSION_NOT_ACTIVE', 409)
+      }
+    } catch (error: unknown) {
+      if (error instanceof ControlPlaneHTTPError) throw error
+      throw new ControlPlaneHTTPError('INTERNAL_DEPENDENCY_UNAVAILABLE', 503)
+    }
+    const remainingSeconds = Math.floor((expiresAtMs - nowMs) / 1_000)
+    if (!Number.isFinite(remainingSeconds) || remainingSeconds < 1) {
+      throw new ControlPlaneHTTPError('SESSION_EXPIRED', 409)
+    }
+    const issued = relay.tokens.issue({
+      tenantID: context.tenantID,
+      sessionID: session.id,
+      ttlSeconds: Math.min(relay.tokenTTLSeconds, remainingSeconds),
+    })
+    const webSocketURL = new URL(`/v1/sessions/${session.id}/cdp`, relay.publicURL)
+    await this.#audit(context, 'relay.token.issued', this.#now().toISOString(), session.id)
+    return RelayTokenResponseSchema.parse({
+      webSocketUrl: webSocketURL.href,
+      token: issued.token,
+      expiresAt: issued.expiresAt,
+    })
+  }
+
   async terminate(context: AuthenticatedTenantContext, sessionID: SessionID, signal?: AbortSignal) {
     let session = await this.#dependencies.sessions.findSessionForTenant(
       context.tenantID,
@@ -357,6 +409,24 @@ export class SessionService {
     const at = this.#now().toISOString()
     session = await this.#transition(session, { type: 'request_termination', at })
     await this.#audit(context, 'session.terminate.requested', at, session.id)
+    const terminatingSessionID = session.id
+    if (this.#dependencies.relay !== undefined) {
+      await this.#dependencies.relay.authorization
+        .revokeSession({
+          tenantID: context.tenantID,
+          sessionID: terminatingSessionID,
+          ttlSeconds: 300,
+        })
+        .then(() =>
+          this.#audit(
+            context,
+            'relay.session.revoked',
+            this.#now().toISOString(),
+            terminatingSessionID,
+          ),
+        )
+        .catch(() => undefined)
+    }
     try {
       if (session.providerSessionReferenceEncrypted === null) throw new Error('missing reference')
       const protectedSession = this.#dependencies.protector.decrypt(

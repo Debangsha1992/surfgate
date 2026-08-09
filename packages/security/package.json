@@ -3,6 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@surfgate/config": "workspace:*",
+    "@surfgate/contracts": "workspace:*",
+    "@surfgate/provider-core": "workspace:*",
+    "@surfgate/router": "workspace:*",
+    "zod": "^4.4.3"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

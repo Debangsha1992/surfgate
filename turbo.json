@@ -16,7 +16,19 @@
       "dependsOn": ["^build"]
     },
     "test:integration": {
-      "dependsOn": ["^build"]
+      "cache": false,
+      "dependsOn": ["^build"],
+      "passThroughEnv": [
+        "NODE_ENV",
+        "SURFGATE_RELAY_PUBLIC_URL",
+        "DATABASE_URL",
+        "TEST_DATABASE_URL",
+        "REDIS_URL",
+        "S3_REGION",
+        "S3_BUCKET",
+        "SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY",
+        "SURFGATE_RELAY_TOKEN_SIGNING_KEY"
+      ]
     },
     "test:conformance": {
       "dependsOn": ["^build"]

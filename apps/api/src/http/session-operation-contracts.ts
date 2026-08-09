@@ -13,3 +13,6 @@ export const GET_SESSION_ERROR_STATUSES = Object.freeze([400, 401, 403, 404, 500
 export const DELETE_SESSION_ERROR_STATUSES = Object.freeze([
   400, 401, 403, 404, 409, 500, 502, 503, 504,
 ] as const)
+export const RELAY_TOKEN_ERROR_STATUSES = Object.freeze([
+  400, 401, 403, 404, 409, 500, 503,
+] as const)

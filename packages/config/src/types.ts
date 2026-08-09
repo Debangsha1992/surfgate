@@ -17,6 +17,15 @@ export type RelayConfig = Readonly<{
   host: string
   port: number
   publicURL: URL
+  tokenTTLSeconds: number
+  connectTimeoutMs: number
+  idleTimeoutMs: number
+  absoluteTimeoutMs: number
+  maxMessageBytes: number
+  maxQueuedBytes: number
+  leaseTTLms: number
+  authorizationCheckIntervalMs: number
+  drainTimeoutMs: number
 }>
 
 export type DatabaseConfig = Readonly<{
@@ -29,8 +38,14 @@ export type ProviderSessionEncryptionConfig = Readonly<{
   keyID: string
 }>
 
+export type RelayTokenSigningConfig = Readonly<{
+  key: KeyObject
+  keyID: string
+}>
+
 export type SecurityConfig = Readonly<{
   providerSessionEncryption: ProviderSessionEncryptionConfig | undefined
+  relayTokenSigning: RelayTokenSigningConfig | undefined
 }>
 
 export type RedisConfig = Readonly<{
