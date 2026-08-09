@@ -52,3 +52,30 @@ export const NOOP_CONTROL_PLANE_TELEMETRY: ControlPlaneTelemetry = Object.freeze
   recordSessionTransition(): void {},
   recordOperation(): void {},
 })
+
+export type RelayConnectionObservation = Readonly<{
+  event: 'connect' | 'upstream_connect' | 'close' | 'backpressure' | 'auth_failure'
+  outcome: 'success' | 'failure'
+  durationMs?: number
+  runtimeClass?: string
+  providerID?: string
+  reasonCode?: string
+}>
+
+export type RelayTrafficObservation = Readonly<{
+  direction: 'client_to_upstream' | 'upstream_to_client'
+  bytes: number
+  frames: number
+}>
+
+export interface RelayTelemetry {
+  recordConnection(input: RelayConnectionObservation): void
+  recordTraffic(input: RelayTrafficObservation): void
+  setActiveConnections(value: number): void
+}
+
+export const NOOP_RELAY_TELEMETRY: RelayTelemetry = Object.freeze({
+  recordConnection(): void {},
+  recordTraffic(): void {},
+  setActiveConnections(): void {},
+})

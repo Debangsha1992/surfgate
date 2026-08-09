@@ -4,8 +4,9 @@ import type {
   EnvironmentSource,
   LogLevel,
   ObjectStorageCredentials,
-  RuntimeEnvironment,
   ProviderSessionEncryptionConfig,
+  RelayTokenSigningConfig,
+  RuntimeEnvironment,
   SurfGateConfig,
 } from './types.js'
 
@@ -141,6 +142,31 @@ function optionalURL(
   return value === undefined ? undefined : parsedURL(value, key, protocols, fallback, issues)
 }
 
+function relayPublicURL(
+  environment: EnvironmentSource,
+  secureTransportRequired: boolean,
+  issues: ConfigurationIssue[],
+): URL {
+  const key = 'SURFGATE_RELAY_PUBLIC_URL'
+  const value = requiredURL(
+    environment,
+    key,
+    secureTransportRequired ? ['wss:'] : ['ws:', 'wss:'],
+    new URL('ws://invalid.invalid'),
+    issues,
+  )
+  if (
+    value.username.length > 0 ||
+    value.password.length > 0 ||
+    value.search.length > 0 ||
+    value.hash.length > 0 ||
+    value.pathname !== '/'
+  ) {
+    issues.push({ key, message: 'must be a credential-free relay origin URL' })
+  }
+  return value
+}
+
 function objectStorageCredentials(
   environment: EnvironmentSource,
   issues: ConfigurationIssue[],
@@ -259,6 +285,39 @@ function providerSessionEncryption(
   return Object.freeze({ key: createSecretKey(decodedKey), keyID })
 }
 
+function relayTokenSigning(
+  environment: EnvironmentSource,
+  runtimeEnvironment: RuntimeEnvironment,
+  issues: ConfigurationIssue[],
+): RelayTokenSigningConfig | undefined {
+  const keyName = 'SURFGATE_RELAY_TOKEN_SIGNING_KEY'
+  const encodedKey = optionalSecret(environment, keyName)
+  if (encodedKey === undefined) {
+    if (runtimeEnvironment === 'production') {
+      issues.push({ key: keyName, message: 'is required in production' })
+    }
+    return undefined
+  }
+  if (!BASE64_32_BYTE_KEY_PATTERN.test(encodedKey)) {
+    issues.push({ key: keyName, message: 'must be a base64-encoded 32-byte key' })
+    return undefined
+  }
+  const decodedKey = Buffer.from(encodedKey, 'base64')
+  if (decodedKey.byteLength !== 32 || decodedKey.toString('base64') !== encodedKey) {
+    issues.push({ key: keyName, message: 'must be a base64-encoded 32-byte key' })
+    return undefined
+  }
+  const keyID = optionalString(environment, 'SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID') ?? 'v1'
+  if (!KEY_ID_PATTERN.test(keyID)) {
+    issues.push({
+      key: 'SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID',
+      message: 'must be a safe key identifier',
+    })
+    return undefined
+  }
+  return Object.freeze({ key: createSecretKey(decodedKey), keyID })
+}
+
 function requireProductionPostgresTLS(
   url: URL,
   environment: RuntimeEnvironment,
@@ -292,14 +351,86 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
   const relay = Object.freeze({
     host: optionalString(environment, 'SURFGATE_RELAY_HOST') ?? '127.0.0.1',
     port: port(environment, 'SURFGATE_RELAY_PORT', 8081, issues),
-    publicURL: requiredURL(
+    publicURL: relayPublicURL(environment, secureTransportRequired, issues),
+    tokenTTLSeconds: boundedInteger(
       environment,
-      'SURFGATE_RELAY_PUBLIC_URL',
-      secureTransportRequired ? ['wss:'] : ['ws:', 'wss:'],
-      new URL('ws://invalid.invalid'),
+      'SURFGATE_RELAY_TOKEN_TTL_SECONDS',
+      60,
+      10,
+      300,
+      issues,
+    ),
+    connectTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_RELAY_CONNECT_TIMEOUT_MS',
+      10_000,
+      100,
+      60_000,
+      issues,
+    ),
+    idleTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_RELAY_IDLE_TIMEOUT_MS',
+      60_000,
+      1_000,
+      3_600_000,
+      issues,
+    ),
+    absoluteTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_RELAY_ABSOLUTE_TIMEOUT_MS',
+      3_600_000,
+      1_000,
+      86_400_000,
+      issues,
+    ),
+    maxMessageBytes: boundedInteger(
+      environment,
+      'SURFGATE_RELAY_MAX_MESSAGE_BYTES',
+      8 * 1_024 * 1_024,
+      1_024,
+      64 * 1_024 * 1_024,
+      issues,
+    ),
+    maxQueuedBytes: boundedInteger(
+      environment,
+      'SURFGATE_RELAY_MAX_QUEUED_BYTES',
+      16 * 1_024 * 1_024,
+      1_024,
+      128 * 1_024 * 1_024,
+      issues,
+    ),
+    leaseTTLms: boundedInteger(
+      environment,
+      'SURFGATE_RELAY_LEASE_TTL_MS',
+      15_000,
+      1_000,
+      60_000,
+      issues,
+    ),
+    authorizationCheckIntervalMs: boundedInteger(
+      environment,
+      'SURFGATE_RELAY_AUTHORIZATION_CHECK_INTERVAL_MS',
+      2_000,
+      250,
+      60_000,
+      issues,
+    ),
+    drainTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_RELAY_DRAIN_TIMEOUT_MS',
+      10_000,
+      100,
+      60_000,
       issues,
     ),
   })
+  if (relay.maxQueuedBytes < relay.maxMessageBytes) {
+    issues.push({
+      key: 'SURFGATE_RELAY_MAX_QUEUED_BYTES',
+      message: 'must be greater than or equal to the maximum message size',
+    })
+  }
   const databaseURL = requiredURL(
     environment,
     'DATABASE_URL',
@@ -355,6 +486,7 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
   })
   const security = Object.freeze({
     providerSessionEncryption: providerSessionEncryption(environment, runtime.environment, issues),
+    relayTokenSigning: relayTokenSigning(environment, runtime.environment, issues),
   })
   const controlPlane = Object.freeze({
     healthTimeoutMs: boundedInteger(

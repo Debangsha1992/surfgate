@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   IdempotencyKeySchema,
   PublicSessionSchema,
+  RelayTokenResponseSchema,
   SessionCreateRequestSchema,
   SessionTerminationResponseSchema,
 } from '../src/index.js'
@@ -96,5 +97,27 @@ describe('v1 session contracts', () => {
         },
       }).session.status,
     ).toBe('terminated')
+  })
+
+  it('validates a short-lived SurfGate relay credential without provider internals', () => {
+    const response = {
+      webSocketUrl: `${'wss://relay.surfgate.example/v1/sessions/'}${SESSION_ID}/cdp`,
+      token: `sgrt.v1.local.${'A'.repeat(64)}.${'B'.repeat(43)}`,
+      expiresAt: '2026-08-09T00:01:00.000Z',
+    }
+
+    expect(RelayTokenResponseSchema.parse(response)).toEqual(response)
+    expect(
+      RelayTokenResponseSchema.safeParse({
+        ...response,
+        webSocketUrl: 'wss://api.cloudflare.com/client/v4/accounts/secret',
+      }).success,
+    ).toBe(false)
+    expect(
+      RelayTokenResponseSchema.safeParse({
+        ...response,
+        webSocketUrl: `wss://token@relay.surfgate.example/v1/sessions/${SESSION_ID}/cdp`,
+      }).success,
+    ).toBe(false)
   })
 })

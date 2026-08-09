@@ -7,8 +7,7 @@ import {
   type APIApplicationDependencies,
 } from './app.js'
 import { createDatabase, type Database } from './database/database.js'
-import { createRedisRateLimitStore } from './redis/redis-client.js'
-import type { RateLimitStore } from './quota/rate-limiter.js'
+import { createRedisRateLimitStore, type ControlPlaneRedisStore } from './redis/redis-client.js'
 import { createRequestRateLimiter } from './quota/rate-limiter.js'
 import { PostgresAPIKeyRepository } from './database/postgres-api-key-repository.js'
 import { PostgresTenantRepository } from './database/postgres-tenant-repository.js'
@@ -20,6 +19,7 @@ import { PostgresAuditEventRepository } from './database/postgres-audit-event-re
 import { PostgresSessionCreateCoordinator } from './database/postgres-session-create-coordinator.js'
 import { createProviderSessionReferenceProtector } from './security/provider-session-reference.js'
 import { createTargetPolicy } from '@surfgate/security'
+import { createRelayTokenService } from '@surfgate/security'
 import { createKitesurfBrowserProvider } from '@surfgate/provider-kitesurf'
 import { createChromiumBrowserProvider } from '@surfgate/provider-chromium'
 import type { BrowserProvider } from '@surfgate/provider-core'
@@ -55,7 +55,7 @@ export function createAPIServer(
     telemetry?: ControlPlaneTelemetry
     logger?: APIApplicationDependencies['logger']
     listen?: (options: ListenOptions) => Promise<void>
-    redis?: RateLimitStore
+    redis?: ControlPlaneRedisStore
     providers?: readonly BrowserProvider[]
   }> = {},
 ): APIServer {
@@ -67,6 +67,10 @@ export function createAPIServer(
     throw new Error(
       'Provider session encryption must be configured before the API can allocate sessions.',
     )
+  }
+  const relaySigning = config.security.relayTokenSigning
+  if (relaySigning === undefined) {
+    throw new Error('Relay token signing must be configured before the API can issue relay tokens.')
   }
   const providers = options.providers ?? [
     createKitesurfBrowserProvider(config.cloudflare),
@@ -88,6 +92,12 @@ export function createAPIServer(
     protector: createProviderSessionReferenceProtector(encryption),
     config: config.controlPlane,
     telemetry,
+    relay: {
+      tokens: createRelayTokenService(relaySigning),
+      authorization: redis,
+      publicURL: config.relay.publicURL,
+      tokenTTLSeconds: config.relay.tokenTTLSeconds,
+    },
   })
   const app = buildAPIApplication({
     databaseHealth: database,

@@ -6,5 +6,5 @@
     "rootDir": ".",
     "tsBuildInfoFile": "dist/tsconfig.typecheck.tsbuildinfo"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

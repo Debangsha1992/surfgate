@@ -2,6 +2,9 @@ import type { RedisConfig } from '@surfgate/config'
 import { createClient } from 'redis'
 
 import type { RateLimitStore } from '../quota/rate-limiter.js'
+import type { RelayAuthorizationStore } from '../relay/relay-authorization.js'
+import { SessionIDSchema, TenantIDSchema } from '@surfgate/contracts'
+import type { SessionID, TenantID } from '@surfgate/contracts'
 
 const INCREMENT_SCRIPT = `
 local count = redis.call('INCR', KEYS[1])
@@ -27,7 +30,13 @@ async function bounded<Result>(operation: Promise<Result>): Promise<Result> {
   }
 }
 
-export function createRedisRateLimitStore(config: RedisConfig): RateLimitStore {
+export type ControlPlaneRedisStore = RateLimitStore & RelayAuthorizationStore
+
+function revocationKey(tenantID: string, sessionID: string): string {
+  return `surfgate:relay:revoked:${tenantID}:${sessionID}`
+}
+
+export function createRedisRateLimitStore(config: RedisConfig): ControlPlaneRedisStore {
   const client = createClient({
     url: config.url.href,
     socket: { connectTimeout: 5_000, reconnectStrategy: false },
@@ -60,6 +69,25 @@ export function createRedisRateLimitStore(config: RedisConfig): RateLimitStore {
       } catch {
         return 'unavailable'
       }
+    },
+    async isSessionRevoked(rawTenantID: TenantID, rawSessionID: SessionID): Promise<boolean> {
+      const tenantID = TenantIDSchema.parse(rawTenantID)
+      const sessionID = SessionIDSchema.parse(rawSessionID)
+      await ensureConnected()
+      return (await bounded(client.exists(revocationKey(tenantID, sessionID)))) === 1
+    },
+    async revokeSession(
+      input: Readonly<{ tenantID: TenantID; sessionID: SessionID; ttlSeconds: number }>,
+    ): Promise<void> {
+      const tenantID = TenantIDSchema.parse(input.tenantID)
+      const sessionID = SessionIDSchema.parse(input.sessionID)
+      const ttlSeconds = Math.max(1, Math.min(86_400, Math.floor(input.ttlSeconds)))
+      await ensureConnected()
+      const key = revocationKey(tenantID, sessionID)
+      await bounded(client.set(key, '1', { EX: ttlSeconds }))
+      await bounded(
+        client.publish('surfgate:relay:revocations:v1', JSON.stringify({ tenantID, sessionID })),
+      )
     },
     async close(): Promise<void> {
       if (!client.isOpen) return

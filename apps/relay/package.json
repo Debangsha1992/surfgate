@@ -4,12 +4,30 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@surfgate/config": "workspace:*"
+    "@surfgate/config": "workspace:*",
+    "@surfgate/contracts": "workspace:*",
+    "@surfgate/observability": "workspace:*",
+    "@surfgate/provider-cloudflare": "workspace:*",
+    "@surfgate/provider-core": "workspace:*",
+    "@surfgate/security": "workspace:*",
+    "pg": "^8.22.0",
+    "redis": "^5.8.2",
+    "ws": "^8.18.3",
+    "zod": "^4.4.3"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "pnpm build && node --enable-source-maps dist/main.js",
     "lint": "eslint . --max-warnings 0",
-    "test": "vitest run --config ../../vitest.config.ts --root .",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "vitest run --config ../../vitest.config.ts --root . --exclude '**/*.integration.test.ts' --exclude '**/*.load.test.ts' --exclude '**/*.live.test.ts'",
+    "test:integration": "vitest run --config ../../vitest.config.ts --root . integration",
+    "test:load": "vitest run --config ../../vitest.config.ts --root . load --maxWorkers=1",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --enable-source-maps dist/main.js"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.21.0",
+    "@types/ws": "^8.18.1",
+    "playwright-core": "^1.58.0"
   }
 }

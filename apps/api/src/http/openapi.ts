@@ -3,12 +3,14 @@ import {
   SessionCreateResponseSchema,
   SessionGetResponseSchema,
   SessionTerminationResponseSchema,
+  RelayTokenResponseSchema,
   SurfGateErrorResponseSchema,
 } from '@surfgate/contracts'
 import {
   CREATE_SESSION_ERROR_STATUSES,
   DELETE_SESSION_ERROR_STATUSES,
   GET_SESSION_ERROR_STATUSES,
+  RELAY_TOKEN_ERROR_STATUSES,
   IdempotencyHeadersSchema,
   SessionParametersSchema,
 } from './session-operation-contracts.js'
@@ -55,7 +57,8 @@ export function buildOpenAPIDocument(): Readonly<Record<string, unknown>> {
           },
           responses: {
             201: {
-              description: 'Session allocated; relay connectivity is not available until Epic 6.',
+              description:
+                'Session allocated. Active sessions can obtain a separate short-lived relay credential.',
               content: {
                 'application/json': { schema: SessionCreateResponseSchema.toJSONSchema() },
               },
@@ -89,6 +92,20 @@ export function buildOpenAPIDocument(): Readonly<Record<string, unknown>> {
               },
             },
             ...errorResponses(DELETE_SESSION_ERROR_STATUSES),
+          },
+        },
+      },
+      '/v1/sessions/{sessionId}/relay-token': {
+        post: {
+          operationId: 'issueRelayToken',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'sessionId', in: 'path', required: true, schema: sessionIDSchema }],
+          responses: {
+            200: {
+              description: 'Short-lived SurfGate relay credential for an active session',
+              content: { 'application/json': { schema: RelayTokenResponseSchema.toJSONSchema() } },
+            },
+            ...errorResponses(RELAY_TOKEN_ERROR_STATUSES),
           },
         },
       },

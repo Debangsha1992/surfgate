@@ -86,6 +86,18 @@ export const InternalProviderConnectionSchema = z
   .readonly()
 export type InternalProviderConnection = z.infer<typeof InternalProviderConnectionSchema>
 
+export const ResolvedProviderConnectionSchema = z
+  .object({
+    endpoint: InternalWebSocketEndpointSchema,
+    headers: z
+      .object({ Authorization: z.string().min(1).max(8_192).optional() })
+      .strict()
+      .readonly(),
+  })
+  .strict()
+  .readonly()
+export type ResolvedProviderConnection = z.infer<typeof ResolvedProviderConnectionSchema>
+
 const ProviderSessionMetadataSchema = z
   .object({
     region: z.string().trim().min(1).max(64).optional(),

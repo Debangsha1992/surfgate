@@ -26,6 +26,7 @@ const VALID_PRODUCTION_ENVIRONMENT = {
   S3_ENDPOINT: 'https://objects.surfgate.example',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'https://telemetry.surfgate.example',
   SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
+  SURFGATE_RELAY_TOKEN_SIGNING_KEY: Buffer.alloc(32, 8).toString('base64'),
 } as const
 
 describe('parseConfig', () => {
@@ -36,6 +37,17 @@ describe('parseConfig', () => {
     expect(config.api).toEqual({ host: '127.0.0.1', port: 8080 })
     expect(config.relay).toMatchObject({ host: '127.0.0.1', port: 8081 })
     expect(config.relay.publicURL.href).toBe('ws://127.0.0.1:8081/')
+    expect(config.relay).toMatchObject({
+      absoluteTimeoutMs: 3_600_000,
+      authorizationCheckIntervalMs: 2_000,
+      connectTimeoutMs: 10_000,
+      drainTimeoutMs: 10_000,
+      idleTimeoutMs: 60_000,
+      leaseTTLms: 15_000,
+      maxMessageBytes: 8_388_608,
+      maxQueuedBytes: 16_777_216,
+      tokenTTLSeconds: 60,
+    })
     expect(config.database.url.protocol).toBe('postgresql:')
     expect(config.database.testURL).toBeUndefined()
     expect(config.redis.url.protocol).toBe('redis:')
@@ -122,6 +134,8 @@ describe('parseConfig', () => {
     ['DATABASE_URL', 'https://database.example.test'],
     ['REDIS_URL', 'https://redis.example.test'],
     ['SURFGATE_RELAY_PUBLIC_URL', 'https://relay.example.test'],
+    ['SURFGATE_RELAY_PUBLIC_URL', 'wss://user@relay.example.test'],
+    ['SURFGATE_RELAY_PUBLIC_URL', 'wss://relay.example.test/?token=secret'],
     ['S3_ENDPOINT', 'not a URL'],
     ['OTEL_EXPORTER_OTLP_ENDPOINT', 'file:///tmp/telemetry'],
     ['CLOUDFLARE_API_BASE_URL', 'http://api.cloudflare.test'],
@@ -151,6 +165,19 @@ describe('parseConfig', () => {
 
     expect(config.security.providerSessionEncryption?.key.symmetricKeySize).toBe(32)
     expect(config.security.providerSessionEncryption?.keyID).toBe('local-v1')
+    expect(JSON.stringify(config)).not.toContain(encodedKey)
+  })
+
+  it('parses relay-token signing material without retaining its source text', () => {
+    const encodedKey = Buffer.alloc(32, 6).toString('base64')
+    const config = parseConfig({
+      ...VALID_DEVELOPMENT_ENVIRONMENT,
+      SURFGATE_RELAY_TOKEN_SIGNING_KEY: encodedKey,
+      SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID: 'relay-local-v1',
+    })
+
+    expect(config.security.relayTokenSigning?.key.symmetricKeySize).toBe(32)
+    expect(config.security.relayTokenSigning?.keyID).toBe('relay-local-v1')
     expect(JSON.stringify(config)).not.toContain(encodedKey)
   })
 
@@ -191,6 +218,34 @@ describe('parseConfig', () => {
       /SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY/u,
     )
     expect(_key).toBeDefined()
+  })
+
+  it('requires relay-token signing material in production', () => {
+    const { SURFGATE_RELAY_TOKEN_SIGNING_KEY: _key, ...withoutRelaySigningKey } =
+      VALID_PRODUCTION_ENVIRONMENT
+    expect(() => parseConfig(withoutRelaySigningKey)).toThrowError(
+      /SURFGATE_RELAY_TOKEN_SIGNING_KEY/u,
+    )
+    expect(_key).toBeDefined()
+  })
+
+  it('rejects weak relay-token signing material without echoing it', () => {
+    const weakKey = Buffer.alloc(16, 4).toString('base64')
+    expect(() =>
+      parseConfig({
+        ...VALID_DEVELOPMENT_ENVIRONMENT,
+        SURFGATE_RELAY_TOKEN_SIGNING_KEY: weakKey,
+      }),
+    ).toThrowError(/SURFGATE_RELAY_TOKEN_SIGNING_KEY/u)
+    try {
+      parseConfig({
+        ...VALID_DEVELOPMENT_ENVIRONMENT,
+        SURFGATE_RELAY_TOKEN_SIGNING_KEY: weakKey,
+      })
+      expect.fail('Expected weak signing material to throw')
+    } catch (error: unknown) {
+      expect(error instanceof Error ? error.message : '').not.toContain(weakKey)
+    }
   })
 
   it('accepts a complete optional Cloudflare credential pair', () => {

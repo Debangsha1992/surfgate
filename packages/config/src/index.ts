@@ -19,6 +19,7 @@ export type {
   RuntimeConfig,
   RuntimeEnvironment,
   ProviderSessionEncryptionConfig,
+  RelayTokenSigningConfig,
   SecurityConfig,
   SurfGateConfig,
   TelemetryConfig,

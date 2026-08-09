@@ -3,6 +3,7 @@ import {
   SessionCreateResponseSchema,
   SessionGetResponseSchema,
   SessionTerminationResponseSchema,
+  RelayTokenResponseSchema,
   SurfGateErrorResponseSchema,
 } from '@surfgate/contracts'
 import type { ControlPlaneTelemetry } from '@surfgate/observability'
@@ -17,6 +18,7 @@ import {
   CREATE_SESSION_ERROR_STATUSES,
   DELETE_SESSION_ERROR_STATUSES,
   GET_SESSION_ERROR_STATUSES,
+  RELAY_TOKEN_ERROR_STATUSES,
   IdempotencyHeadersSchema,
   SessionParametersSchema,
 } from './session-operation-contracts.js'
@@ -139,6 +141,28 @@ export function registerSessionRoutes(
       } finally {
         cancellation.release()
       }
+    },
+  )
+
+  app.post(
+    '/v1/sessions/:sessionId/relay-token',
+    {
+      schema: {
+        params: fastifySchema(SessionParametersSchema),
+        response: {
+          200: fastifySchema(RelayTokenResponseSchema),
+          ...errorResponses(RELAY_TOKEN_ERROR_STATUSES),
+        },
+      },
+      preHandler: createAuthenticationHook({
+        authenticate: dependencies.authenticate,
+        telemetry: dependencies.telemetry,
+        requiredScopes: ['sessions:connect'],
+      }),
+    },
+    async (request) => {
+      const parameters = SessionParametersSchema.parse(request.params)
+      return dependencies.service.issueRelayToken(request.auth, parameters.sessionId)
     },
   )
 }

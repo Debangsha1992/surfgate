@@ -15,6 +15,7 @@
     "test": "turbo test --cache-dir=.cache/turbo",
     "test:integration": "turbo test:integration --cache-dir=.cache/turbo",
     "test:conformance": "turbo test:conformance --cache-dir=.cache/turbo",
+    "test:relay-load": "pnpm --filter @surfgate/relay test:load",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"

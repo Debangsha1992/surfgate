@@ -15,6 +15,8 @@ export const AUDIT_EVENT_TYPES = [
   'session.terminate.requested',
   'session.terminated',
   'session.terminate.failed',
+  'relay.token.issued',
+  'relay.session.revoked',
   'quota.denied',
   'policy.denied',
 ] as const

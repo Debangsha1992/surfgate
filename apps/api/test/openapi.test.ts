@@ -15,13 +15,18 @@ type SessionOpenAPI = Readonly<{
   paths: Readonly<{
     '/v1/sessions': Readonly<{ post: Operation }>
     '/v1/sessions/{sessionId}': Readonly<{ get: Operation; delete: Operation }>
+    '/v1/sessions/{sessionId}/relay-token': Readonly<{ post: Operation }>
   }>
 }>
 
 describe('SurfGate v1 OpenAPI', () => {
-  it('derives all session operations from runtime schemas without relay fields', () => {
+  it('derives all session operations from runtime schemas without provider fields', () => {
     const document = buildOpenAPIDocument() as SessionOpenAPI
-    expect(Object.keys(document.paths)).toEqual(['/v1/sessions', '/v1/sessions/{sessionId}'])
+    expect(Object.keys(document.paths)).toEqual([
+      '/v1/sessions',
+      '/v1/sessions/{sessionId}',
+      '/v1/sessions/{sessionId}/relay-token',
+    ])
     expect(document.paths['/v1/sessions'].post.security).toEqual([{ bearerAuth: [] }])
     expect(document.paths['/v1/sessions'].post.parameters).toContainEqual(
       expect.objectContaining({ name: 'Idempotency-Key', required: true }),
@@ -37,6 +42,11 @@ describe('SurfGate v1 OpenAPI', () => {
     expect(
       Object.keys(document.paths['/v1/sessions/{sessionId}'].delete.responses).map(Number),
     ).toEqual([200, 400, 401, 403, 404, 409, 500, 502, 503, 504])
+    expect(
+      Object.keys(document.paths['/v1/sessions/{sessionId}/relay-token'].post.responses).map(
+        Number,
+      ),
+    ).toEqual([200, 400, 401, 403, 404, 409, 500, 503])
     const idempotencyParameter = document.paths['/v1/sessions'].post.parameters[0]
     expect(idempotencyParameter?.schema).toEqual(
       IdempotencyHeadersSchema.toJSONSchema().properties?.['idempotency-key'],
@@ -46,7 +56,7 @@ describe('SurfGate v1 OpenAPI', () => {
       SessionParametersSchema.toJSONSchema().properties?.sessionId,
     )
     const serialized = JSON.stringify(document)
-    expect(serialized).not.toContain('webSocketUrl')
+    expect(serialized).toContain('webSocketUrl')
     expect(serialized).not.toContain('providerSessionReference')
     expect(serialized).not.toContain('apiToken')
   })
