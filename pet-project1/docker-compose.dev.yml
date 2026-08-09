@@ -1,0 +1,50 @@
+name: surfgate-dev
+
+services:
+  postgres:
+    image: postgres:17.10-alpine3.24
+    restart: 'no'
+    environment:
+      POSTGRES_USER: surfgate
+      POSTGRES_PASSWORD: surfgate
+      POSTGRES_DB: surfgate
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+      TZ: UTC
+    ports:
+      - '127.0.0.1:5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U surfgate -d surfgate']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    stop_grace_period: 10s
+    volumes:
+      - surfgate-postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8.8.0-alpine3.23
+    restart: 'no'
+    ports:
+      - '127.0.0.1:6379:6379'
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    stop_grace_period: 10s
+    volumes:
+      - surfgate-redis:/data
+
+volumes:
+  surfgate-postgres:
+  surfgate-redis:

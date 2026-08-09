@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "incremental": true,
+    "noEmit": true,
+    "rootDir": ".",
+    "tsBuildInfoFile": "dist/tsconfig.typecheck.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

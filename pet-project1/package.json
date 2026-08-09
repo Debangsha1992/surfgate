@@ -1,0 +1,32 @@
+{
+  "name": "surfgate",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser runtime router for AI agents",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "packageManager": "pnpm@10.15.1",
+  "scripts": {
+    "dev": "turbo dev --cache-dir=.cache/turbo",
+    "build": "turbo build --cache-dir=.cache/turbo",
+    "lint": "turbo lint --cache-dir=.cache/turbo",
+    "typecheck": "turbo typecheck --cache-dir=.cache/turbo",
+    "test": "turbo test --cache-dir=.cache/turbo",
+    "test:integration": "turbo test:integration --cache-dir=.cache/turbo",
+    "test:conformance": "turbo test:conformance --cache-dir=.cache/turbo",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  }
+}

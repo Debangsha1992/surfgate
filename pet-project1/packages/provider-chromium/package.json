@@ -1,0 +1,32 @@
+{
+  "name": "@surfgate/provider-chromium",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --config ../../vitest.config.ts --root . --exclude '**/*.live.test.ts'",
+    "test:conformance": "vitest run --config ../../vitest.config.ts --root . conformance",
+    "pretest:live": "pnpm --filter @surfgate/config build",
+    "test:live": "vitest run --config ../../vitest.config.ts --root . live",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@surfgate/config": "workspace:*",
+    "@surfgate/contracts": "workspace:*",
+    "@surfgate/provider-cloudflare": "workspace:*",
+    "@surfgate/provider-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@surfgate/testing": "workspace:*"
+  }
+}

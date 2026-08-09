@@ -1,0 +1,35 @@
+{
+  "name": "@surfgate/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@surfgate/config": "workspace:*",
+    "@surfgate/contracts": "workspace:*",
+    "@surfgate/observability": "workspace:*",
+    "@surfgate/provider-core": "workspace:*",
+    "@surfgate/provider-chromium": "workspace:*",
+    "@surfgate/provider-kitesurf": "workspace:*",
+    "@surfgate/router": "workspace:*",
+    "@surfgate/security": "workspace:*",
+    "fastify": "^5.11.3",
+    "pg": "^8.22.0",
+    "redis": "^5.8.2",
+    "zod": "^4.4.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "db:migrate": "pnpm build && node dist/database/migrate.js",
+    "dev": "pnpm build && node --enable-source-maps dist/main.js",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --config ../../vitest.config.ts --root . --exclude '**/*.integration.test.ts' --exclude '**/*.live.test.ts'",
+    "test:integration": "vitest run --config ../../vitest.config.ts --root . integration",
+    "test:live": "vitest run --config ../../vitest.config.ts --root . live",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "node --enable-source-maps dist/main.js"
+  },
+  "devDependencies": {
+    "@surfgate/testing": "workspace:*",
+    "@types/pg": "^8.21.0"
+  }
+}

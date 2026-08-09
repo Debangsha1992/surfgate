@@ -1,0 +1,35 @@
+**/coverage/
+**/dist/
+**/node_modules/
+.cache/
+.env
+.pnpm-store/
+
+# Legacy documents predate the formatter baseline. Keep the repository-wide
+# gate while avoiding unrelated formatting churn until each source is migrated.
+AGENTS.md
+API.md
+ARCHITECTURE.md
+CONTRIBUTING.md
+IMPLEMENTATION_PLAN.md
+OBSERVABILITY.md
+PRD(20260807-132027).md
+ROADMAP.md
+ROUTING.md
+SECURITY copy.md
+SECURITY.md
+TESTING.md
+THREAT_MODEL.md
+docs/IMPLEMENTATION_PLAN.md
+docs/OBSERVABILITY.md
+docs/OPERATIONS.md
+docs/PRD.md
+docs/ROADMAP.md
+docs/SECURITY.md
+docs/THREAT_MODEL.md
+docs/adr/0001-control-data-plane.md
+docs/adr/0005-cdp-relay.md
+docs/superpowers/plans/2026-08-08-local-environment-repair.md
+docs/superpowers/plans/2026-08-08-sg-0001-monorepo-baseline.md
+docs/superpowers/plans/2026-08-08-sg-0002-sg-0003-infrastructure-config.md
+pnpm-lock.yaml

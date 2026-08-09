@@ -1,0 +1,27 @@
+{
+  "name": "@surfgate/testing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --config ../../vitest.config.ts --root .",
+    "test:conformance": "vitest run --config ../../vitest.config.ts --root . conformance",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@surfgate/provider-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "vitest": "^3.0.0"
+  }
+}
