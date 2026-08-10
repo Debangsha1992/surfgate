@@ -20,6 +20,7 @@
     "dev": "pnpm --filter @surfgate/relay... build && node --enable-source-maps dist/main.js",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --config ../../vitest.config.ts --root . --exclude '**/*.integration.test.ts' --exclude '**/*.load.test.ts' --exclude '**/*.live.test.ts'",
+    "test:security": "vitest run --config ../../vitest.config.ts --root . test/authorization.test.ts test/message-pump.test.ts test/relay-server.integration.test.ts",
     "test:integration": "vitest run --config ../../vitest.config.ts --root . integration",
     "test:load": "vitest run --config ../../vitest.config.ts --root . load --maxWorkers=1",
     "typecheck": "tsc -p tsconfig.json --noEmit",

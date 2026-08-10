@@ -29,6 +29,10 @@ const context: AuthenticatedTenantContext = Object.freeze({
   requestID: RequestIDSchema.parse('req_01ARZ3NDEKTSV4RRFFQ69G5FAV'),
   scopes: ['sessions:write', 'sessions:read', 'sessions:terminate', 'sessions:connect'],
 })
+const otherTenantContext: AuthenticatedTenantContext = Object.freeze({
+  ...context,
+  tenantID: TenantIDSchema.parse('ten_01BX5ZZKBKACTAV9WEVGEMMVRY'),
+})
 
 function provider(
   runtimeClass: 'kitesurf' | 'chromium',
@@ -58,6 +62,7 @@ function fixture(
     failActivationAndRecoveryRead?: boolean
     failFirstAudit?: boolean
     requestFailure?: 'rate_limit' | 'redis' | 'target'
+    withoutRelay?: boolean
   }> = {},
 ) {
   let session: Session | undefined
@@ -75,12 +80,12 @@ function fixture(
   const attempts: Array<{ attemptNumber: number; status?: string }> = []
   const sessions = {
     insertSession: (value: Session) => Promise.resolve((session = value)),
-    findSessionForTenant: () => {
+    findSessionForTenant: (tenantID: AuthenticatedTenantContext['tenantID']) => {
       if (recoveryReadShouldFail) {
         recoveryReadShouldFail = false
         return Promise.reject(new Error('database unavailable'))
       }
-      return Promise.resolve(session ?? null)
+      return Promise.resolve(session?.tenantID === tenantID ? session : null)
     },
     transitionSessionForTenant: (
       input: Parameters<typeof applySessionTransition>[1] extends never
@@ -197,20 +202,24 @@ function fixture(
       ownerToken: () => 'A'.repeat(32),
     },
     now: () => new Date('2026-08-09T00:00:00.000Z'),
-    relay: {
-      tokens: {
-        issue: () => ({
-          token: RelayTokenSchema.parse(`sgrt.v1.v1.${'A'.repeat(64)}.${'B'.repeat(43)}`),
-          expiresAt: '2026-08-09T00:01:00.000Z',
+    ...(options.withoutRelay === true
+      ? {}
+      : {
+          relay: {
+            tokens: {
+              issue: () => ({
+                token: RelayTokenSchema.parse(`sgrt.v1.v1.${'A'.repeat(64)}.${'B'.repeat(43)}`),
+                expiresAt: '2026-08-09T00:01:00.000Z',
+              }),
+              verify: () => {
+                throw new Error('not used by the API')
+              },
+            },
+            authorization: { isSessionRevoked, revokeSession },
+            publicURL: new URL('ws://127.0.0.1:8081'),
+            tokenTTLSeconds: 60,
+          },
         }),
-        verify: () => {
-          throw new Error('not used by the API')
-        },
-      },
-      authorization: { isSessionRevoked, revokeSession },
-      publicURL: new URL('ws://127.0.0.1:8081'),
-      tokenTTLSeconds: 60,
-    },
   })
   return {
     service,
@@ -245,6 +254,18 @@ describe('SessionService', () => {
     expect(JSON.stringify(result)).not.toContain('psr.v1')
   })
 
+  it('revalidates a target immediately before provider allocation', async () => {
+    const setup = fixture()
+
+    await setup.service.create(
+      context,
+      { targetUrl: 'https://example.com/path' },
+      'target-revalidation',
+    )
+
+    expect(setup.targetPolicyChecks).toBe(2)
+  })
+
   it('issues only a short-lived SurfGate relay credential for an active tenant session', async () => {
     const setup = fixture()
     const created = await setup.service.create(context, {}, 'relay-token-session')
@@ -256,6 +277,15 @@ describe('SessionService', () => {
     })
     expect(response.token).not.toContain('cloudflare')
     expect(setup.isSessionRevoked).toHaveBeenCalledWith(context.tenantID, created.session.id)
+  })
+
+  it('returns tenant-safe not-found before exposing relay dependency state', async () => {
+    const setup = fixture('success', { withoutRelay: true })
+    const created = await setup.service.create(context, {}, 'tenant-safe-relay-token')
+
+    await expect(
+      setup.service.issueRelayToken(otherTenantContext, created.session.id),
+    ).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND', statusCode: 404 })
   })
 
   it('fails closed when an active relay session has no finite expiry', async () => {

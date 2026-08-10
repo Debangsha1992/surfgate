@@ -129,8 +129,8 @@ Additional established suites include:
 ```bash
 pnpm test:integration
 pnpm test:conformance
+pnpm test:security
 pnpm --filter @surfgate/router test:golden
-pnpm --filter @surfgate/security test
 pnpm test:relay-load
 ```
 
@@ -197,6 +197,17 @@ The current control plane is designed so that:
 - Upstream WebSocket URLs and authorization headers remain inside the relay data plane.
 - Frame and queue limits prevent slow peers from creating unbounded relay buffers.
 - Authentication, policy, quota, and public error behavior use validated stable contracts.
+- Target URLs accept only HTTP(S), reject embedded credentials, and deny localhost plus private, link-local, metadata, multicast, reserved, and other special-use IPv4/IPv6 destinations.
+- Hostname targets are normalized, all bounded DNS answers are checked, resolution must remain stable across repeated checks, and the target is checked again immediately before provider allocation.
+- Redirect-chain validation applies the same bounded URL, DNS, and destination policy to every supplied hop and rejects loops or excessive chains.
+- API responses opt out of caching and MIME sniffing; request bodies and request lifetimes are bounded. Cross-origin access is disabled unless a future explicit policy enables it.
+- Structured API and relay logging share recursive, non-mutating redaction for authorization data, API/relay/provider tokens, cookies, passwords, connection credentials, and secret-bearing URLs.
 - SurfGate does not provide CAPTCHA bypass, stealth plugins, TLS fingerprint spoofing, or other anti-bot evasion features.
 
 Raw CDP frames, page content, cookies, relay tokens, and provider URLs are never included in normal logs. SurfGate does not migrate or replay an active CDP session across runtimes.
+
+### Browser-navigation security boundary
+
+The control plane validates a requested `targetUrl`, but the current Cloudflare allocation API creates a browser session without asking SurfGate to perform that navigation. Once an authenticated client controls the transparent CDP relay, commands such as `Page.navigate`, script-driven navigation, popups, and browser subresource requests are resolved inside the provider browser. SurfGate currently cannot pin that browser's DNS socket or inspect every provider-side redirect, so the URL policy and redirect-chain helper must not be interpreted as complete SSRF isolation for arbitrary raw CDP activity.
+
+Only trusted tenant principals should receive API keys and relay credentials. Deployments requiring untrusted raw-CDP users need an egress policy or provider/browser request-interception layer that independently enforces allowed destinations. That enforcement is deliberately not claimed by the current milestone.

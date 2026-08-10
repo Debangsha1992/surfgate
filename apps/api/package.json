@@ -23,6 +23,7 @@
     "dev": "pnpm build && node --enable-source-maps dist/main.js",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --config ../../vitest.config.ts --root . --exclude '**/*.integration.test.ts' --exclude '**/*.live.test.ts'",
+    "test:security": "vitest run --config ../../vitest.config.ts --root . test/app.test.ts test/auth test/security test/services/session-service.test.ts",
     "test:integration": "vitest run --config ../../vitest.config.ts --root . integration",
     "test:live": "vitest run --config ../../vitest.config.ts --root . live",
     "typecheck": "tsc -p tsconfig.json",

@@ -3,6 +3,7 @@ import { resolveCloudflareBrowserRunConnection } from '@surfgate/provider-cloudf
 import {
   createProviderSessionReferenceProtector,
   createRelayTokenService,
+  redactSensitiveData,
 } from '@surfgate/security'
 
 import { createRelayDatabase } from './postgres-session-repository.js'
@@ -12,13 +13,19 @@ import { createUpstreamConnectionResolver } from './upstream-resolver.js'
 
 const logger: RelayLogger = Object.freeze({
   info(fields, message): void {
-    process.stdout.write(`${JSON.stringify({ level: 'info', message, ...fields })}\n`)
+    process.stdout.write(
+      `${JSON.stringify({ level: 'info', message, ...redactSensitiveData(fields) })}\n`,
+    )
   },
   warn(fields, message): void {
-    process.stdout.write(`${JSON.stringify({ level: 'warn', message, ...fields })}\n`)
+    process.stdout.write(
+      `${JSON.stringify({ level: 'warn', message, ...redactSensitiveData(fields) })}\n`,
+    )
   },
   error(fields, message): void {
-    process.stderr.write(`${JSON.stringify({ level: 'error', message, ...fields })}\n`)
+    process.stderr.write(
+      `${JSON.stringify({ level: 'error', message, ...redactSensitiveData(fields) })}\n`,
+    )
   },
 })
 

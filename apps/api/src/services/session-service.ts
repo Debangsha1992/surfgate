@@ -354,15 +354,15 @@ export class SessionService {
   }
 
   async issueRelayToken(context: AuthenticatedTenantContext, sessionID: SessionID) {
-    const relay = this.#dependencies.relay
-    if (relay === undefined) {
-      throw new ControlPlaneHTTPError('INTERNAL_DEPENDENCY_UNAVAILABLE', 503)
-    }
     const session = await this.#dependencies.sessions.findSessionForTenant(
       context.tenantID,
       sessionID,
     )
     if (session === null) throw new ControlPlaneHTTPError('SESSION_NOT_FOUND', 404)
+    const relay = this.#dependencies.relay
+    if (relay === undefined) {
+      throw new ControlPlaneHTTPError('INTERNAL_DEPENDENCY_UNAVAILABLE', 503)
+    }
     const nowMs = this.#now().getTime()
     const expiresAtMs = session.expiresAt === null ? Number.NaN : Date.parse(session.expiresAt)
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) {
@@ -564,6 +564,10 @@ export class SessionService {
     signal: AbortSignal | undefined,
     decision: RoutingDecision,
   ): Promise<Session> {
+    const validatedTargetURL =
+      targetURL === undefined
+        ? undefined
+        : await this.#dependencies.targetPolicy.validate(targetURL)
     const at = this.#now().toISOString()
     await this.#dependencies.attempts.start({
       tenantID: context.tenantID,
@@ -581,7 +585,7 @@ export class SessionService {
         requirements: request.capabilities,
         allowExperimental: request.runtime.allowExperimental,
         maxSessionDurationMs: request.maxDurationSeconds * 1_000,
-        ...(targetURL === undefined ? {} : { targetURL }),
+        ...(validatedTargetURL === undefined ? {} : { targetURL: validatedTargetURL }),
         ...(candidate.region === undefined ? {} : { region: candidate.region }),
         ...(candidate.configProfile === undefined
           ? {}

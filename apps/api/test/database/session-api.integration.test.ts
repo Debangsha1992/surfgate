@@ -96,7 +96,7 @@ describeWithDatabase('authenticated session API integration', () => {
       id: APIKeyIDSchema.parse('key_01ARZ3NDEKTSV4RRFFQ69G5FD2'),
       tenantID: TENANT_B,
       mode: 'test',
-      scopes: ['sessions:read'],
+      scopes: ['sessions:write', 'sessions:read', 'sessions:terminate', 'sessions:connect'],
       now: new Date(),
     })
     await keys.insertAPIKey(issuedA.metadata)
@@ -160,6 +160,32 @@ describeWithDatabase('authenticated session API integration', () => {
         headers: { authorization: `Bearer ${issuedB.plaintext}` },
       })
       expect(hidden.statusCode).toBe(404)
+      const hiddenTermination = await app.inject({
+        method: 'DELETE',
+        url: `/v1/sessions/${sessionID}`,
+        headers: { authorization: `Bearer ${issuedB.plaintext}` },
+      })
+      const hiddenRelayToken = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionID}/relay-token`,
+        headers: { authorization: `Bearer ${issuedB.plaintext}` },
+      })
+      expect(hiddenTermination.statusCode).toBe(404)
+      expect(hiddenRelayToken.statusCode).toBe(404)
+
+      const tenantBIndependentCreate = await app.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: {
+          authorization: `Bearer ${issuedB.plaintext}`,
+          'idempotency-key': 'api-integration-1',
+        },
+        payload: {},
+      })
+      expect(tenantBIndependentCreate.statusCode).toBe(201)
+      expect(
+        SessionCreateResponseSchema.parse(tenantBIndependentCreate.json()).session.id,
+      ).not.toBe(sessionID)
       const terminated = await app.inject({
         method: 'DELETE',
         url: `/v1/sessions/${sessionID}`,

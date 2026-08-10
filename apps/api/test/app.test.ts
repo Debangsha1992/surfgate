@@ -91,6 +91,26 @@ describe('Fastify control-plane foundation', () => {
     await app.close()
   })
 
+  it('sets API-safe response headers without enabling permissive CORS', async () => {
+    const app = buildAPIApplication({
+      databaseHealth: { health: vi.fn(() => Promise.resolve('ready' as const)) },
+      telemetry: createTelemetry(),
+      logger: false,
+    })
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/health/live',
+      headers: { origin: 'https://attacker.example' },
+    })
+
+    expect(response.headers['cache-control']).toBe('no-store')
+    expect(response.headers['x-content-type-options']).toBe('nosniff')
+    expect(response.headers['referrer-policy']).toBe('no-referrer')
+    expect(response.headers['access-control-allow-origin']).toBeUndefined()
+    await app.close()
+  })
+
   it('normalizes unexpected errors without exposing secrets or stack traces', async () => {
     let logs = ''
     const stream = new Writable({

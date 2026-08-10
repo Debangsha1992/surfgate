@@ -17,4 +17,14 @@ describe('Redis distributed rate limit integration', () => {
     await limiter.check(tenantID, 1)
     await expect(limiter.check(tenantID, 1)).rejects.toBeInstanceOf(RateLimitExceededError)
   })
+
+  it('isolates equal rate-limit windows between tenants', async () => {
+    const tenantA = TenantIDSchema.parse('ten_01ARZ3NDEKTSV4RRFFQ69G5FC2')
+    const tenantB = TenantIDSchema.parse('ten_01ARZ3NDEKTSV4RRFFQ69G5FC3')
+    const uniqueWindow = Date.now() * 60_000
+    const limiter = createRequestRateLimiter(store, { now: () => uniqueWindow })
+
+    await expect(limiter.check(tenantA, 1)).resolves.toBeUndefined()
+    await expect(limiter.check(tenantB, 1)).resolves.toBeUndefined()
+  })
 })

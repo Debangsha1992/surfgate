@@ -17,21 +17,13 @@ import { registerSessionRoutes } from './http/session-routes.js'
 import type { SessionService } from './services/session-service.js'
 import { RateLimitDependencyError, RateLimitExceededError } from './quota/rate-limiter.js'
 import { TargetPolicyError } from '@surfgate/security'
+import { SENSITIVE_LOG_PATHS } from '@surfgate/security'
 import {
   SessionNotFoundError,
   SessionTransitionConflictError,
 } from './repositories/session-repository.js'
 
-export const FASTIFY_LOG_REDACTION_PATHS = Object.freeze([
-  'req.headers.authorization',
-  'req.headers.cookie',
-  'res.headers.set-cookie',
-  'headers.authorization',
-  'headers.cookie',
-  'authorization',
-  'cookie',
-  'set-cookie',
-])
+export const FASTIFY_LOG_REDACTION_PATHS = SENSITIVE_LOG_PATHS
 
 type LoggerOption = FastifyServerOptions['logger']
 
@@ -95,9 +87,12 @@ function classifyError(error: unknown): Readonly<{ code: SurfGateErrorCode; stat
 export function buildAPIApplication(dependencies: APIApplicationDependencies): FastifyInstance {
   const telemetry = dependencies.telemetry ?? NOOP_CONTROL_PLANE_TELEMETRY
   const fastifyOptions: FastifyServerOptions = {
+    bodyLimit: 1024 * 1024,
+    connectionTimeout: 10_000,
     logController: new LogController({ disableRequestLogging: true }),
     genReqId: (request) => resolveRequestID(request.headers['x-request-id']),
     logger: dependencies.logger ?? false,
+    requestTimeout: 30_000,
   }
   const app = Fastify(fastifyOptions)
   app.decorateRequest('auth')
@@ -106,6 +101,9 @@ export function buildAPIApplication(dependencies: APIApplicationDependencies): F
   app.addHook('onRequest', async (request, reply) => {
     request.startedAtMonotonic = performance.now()
     reply.header('x-request-id', request.id)
+    reply.header('cache-control', 'no-store')
+    reply.header('x-content-type-options', 'nosniff')
+    reply.header('referrer-policy', 'no-referrer')
   })
   app.addHook('onResponse', async (request, reply) => {
     const durationMs = Math.max(0, performance.now() - request.startedAtMonotonic)

@@ -22,6 +22,7 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --config ../../vitest.config.ts --root .",
+    "test:security": "vitest run --config ../../vitest.config.ts --root . test/target-policy.test.ts test/redaction.test.ts test/relay-token.test.ts test/security-regression.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }
