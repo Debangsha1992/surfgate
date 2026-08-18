@@ -1,0 +1,25 @@
+{
+  "name": "@surfgate/object-storage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --config ../../vitest.config.ts --root .",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@surfgate/config": "workspace:*",
+    "@surfgate/task-core": "workspace:*"
+  }
+}

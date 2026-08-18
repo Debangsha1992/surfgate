@@ -16,6 +16,9 @@ export const API_KEY_SCOPES = [
   'sessions:write',
   'sessions:terminate',
   'sessions:connect',
+  'tasks:read',
+  'tasks:write',
+  'artifacts:read',
   'api-keys:manage',
 ] as const
 export const APIKeyScopeSchema = z.enum(API_KEY_SCOPES)

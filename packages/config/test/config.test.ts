@@ -73,6 +73,19 @@ describe('parseConfig', () => {
       },
       terminationTimeoutMs: 15_000,
     })
+    expect(config.tasks).toEqual({
+      artifactMaxBytes: 16_777_216,
+      artifactRetentionSeconds: 86_400,
+      executionTimeoutMs: 30_000,
+      extractMaxBytes: 1_048_576,
+      leaseTTLms: 60_000,
+      maxAttempts: 3,
+      maxQueuedPerTenant: 100,
+      maxRunningPerTenant: 5,
+      pollIntervalMs: 250,
+      requestsPerMinute: 120,
+      screenshotMaxPixels: 33_554_432,
+    })
   })
 
   it('accepts secure production transports', () => {
@@ -125,6 +138,19 @@ describe('parseConfig', () => {
     ['SURFGATE_PROVIDER_TERMINATION_TIMEOUT_MS', '700000'],
     ['SURFGATE_IDEMPOTENCY_WAIT_TIMEOUT_MS', '0'],
   ] as const)('rejects invalid control-plane setting %s', (key, value) => {
+    expect(() => parseConfig({ ...VALID_DEVELOPMENT_ENVIRONMENT, [key]: value })).toThrowError(
+      new RegExp(key),
+    )
+  })
+
+  it.each([
+    ['SURFGATE_TASK_MAX_ATTEMPTS', '0'],
+    ['SURFGATE_TASK_EXECUTION_TIMEOUT_MS', '0'],
+    ['SURFGATE_TASK_LEASE_TTL_MS', '44000'],
+    ['SURFGATE_TASK_ARTIFACT_MAX_BYTES', '999999999'],
+    ['SURFGATE_TASK_SCREENSHOT_MAX_PIXELS', '999'],
+    ['SURFGATE_TASK_POLL_INTERVAL_MS', '0'],
+  ] as const)('rejects invalid managed-task setting %s', (key, value) => {
     expect(() => parseConfig({ ...VALID_DEVELOPMENT_ENVIRONMENT, [key]: value })).toThrowError(
       new RegExp(key),
     )

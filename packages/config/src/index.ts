@@ -12,6 +12,7 @@ export type {
   DatabaseConfig,
   EnvironmentSource,
   LogLevel,
+  ManagedTaskConfig,
   ObjectStorageConfig,
   ObjectStorageCredentials,
   RedisConfig,

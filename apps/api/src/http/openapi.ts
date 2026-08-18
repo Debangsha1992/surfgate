@@ -5,6 +5,8 @@ import {
   SessionTerminationResponseSchema,
   RelayTokenResponseSchema,
   SurfGateErrorResponseSchema,
+  ManagedTaskCreateRequestSchema,
+  ManagedTaskResponseSchema,
 } from '@surfgate/contracts'
 import {
   CREATE_SESSION_ERROR_STATUSES,
@@ -14,6 +16,14 @@ import {
   IdempotencyHeadersSchema,
   SessionParametersSchema,
 } from './session-operation-contracts.js'
+import {
+  ArtifactParametersSchema,
+  CREATE_TASK_ERROR_STATUSES,
+  GET_ARTIFACT_ERROR_STATUSES,
+  GET_TASK_ERROR_STATUSES,
+  TaskIdempotencyHeadersSchema,
+  TaskParametersSchema,
+} from './task-operation-contracts.js'
 
 export function buildOpenAPIDocument(): Readonly<Record<string, unknown>> {
   const errorResponses = (statuses: readonly number[]) =>
@@ -29,6 +39,10 @@ export function buildOpenAPIDocument(): Readonly<Record<string, unknown>> {
   const idempotencyHeaderSchema =
     IdempotencyHeadersSchema.toJSONSchema().properties?.['idempotency-key']
   const sessionIDSchema = SessionParametersSchema.toJSONSchema().properties?.sessionId
+  const taskIDSchema = TaskParametersSchema.toJSONSchema().properties?.taskId
+  const artifactIDSchema = ArtifactParametersSchema.toJSONSchema().properties?.artifactId
+  const taskIdempotencySchema =
+    TaskIdempotencyHeadersSchema.toJSONSchema().properties?.['idempotency-key']
   return Object.freeze({
     openapi: '3.1.0',
     info: { title: 'SurfGate API', version: '1.0.0' },
@@ -106,6 +120,68 @@ export function buildOpenAPIDocument(): Readonly<Record<string, unknown>> {
               content: { 'application/json': { schema: RelayTokenResponseSchema.toJSONSchema() } },
             },
             ...errorResponses(RELAY_TOKEN_ERROR_STATUSES),
+          },
+        },
+      },
+      '/v1/sessions/{sessionId}/tasks': {
+        post: {
+          operationId: 'createManagedTask',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'sessionId', in: 'path', required: true, schema: sessionIDSchema },
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: true,
+              schema: taskIdempotencySchema,
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: ManagedTaskCreateRequestSchema.toJSONSchema() },
+            },
+          },
+          responses: {
+            202: {
+              description: 'Managed task durably queued',
+              content: { 'application/json': { schema: ManagedTaskResponseSchema.toJSONSchema() } },
+            },
+            ...errorResponses(CREATE_TASK_ERROR_STATUSES),
+          },
+        },
+      },
+      '/v1/tasks/{taskId}': {
+        get: {
+          operationId: 'getManagedTask',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'taskId', in: 'path', required: true, schema: taskIDSchema }],
+          responses: {
+            200: {
+              description: 'Tenant-scoped managed task status and safe result metadata',
+              content: { 'application/json': { schema: ManagedTaskResponseSchema.toJSONSchema() } },
+            },
+            ...errorResponses(GET_TASK_ERROR_STATUSES),
+          },
+        },
+      },
+      '/v1/artifacts/{artifactId}': {
+        get: {
+          operationId: 'downloadArtifact',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'artifactId', in: 'path', required: true, schema: artifactIDSchema },
+          ],
+          responses: {
+            200: {
+              description: 'Authenticated tenant-scoped artifact download',
+              content: {
+                'image/png': { schema: { type: 'string', contentEncoding: 'binary' } },
+                'image/jpeg': { schema: { type: 'string', contentEncoding: 'binary' } },
+                'application/pdf': { schema: { type: 'string', contentEncoding: 'binary' } },
+              },
+            },
+            ...errorResponses(GET_ARTIFACT_ERROR_STATUSES),
           },
         },
       },

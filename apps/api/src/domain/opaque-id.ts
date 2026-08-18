@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto'
 
 import {
+  TaskIDSchema,
   RoutingDecisionIDSchema,
   SessionIDSchema,
   type RoutingDecisionID,
   type SessionID,
+  type TaskID,
 } from '@surfgate/contracts'
 
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -26,6 +28,9 @@ export function generateSessionID(now = Date.now()): SessionID {
 }
 export function generateRoutingDecisionID(now = Date.now()): RoutingDecisionID {
   return RoutingDecisionIDSchema.parse(`rtd_${ulid(now)}`)
+}
+export function generateTaskID(now = Date.now()): TaskID {
+  return TaskIDSchema.parse(`tsk_${ulid(now)}`)
 }
 export function generateOwnerToken(): string {
   return randomBytes(32).toString('base64url')

@@ -2,6 +2,8 @@ import {
   APIKeyIDSchema,
   RequestIDSchema,
   SessionIDSchema,
+  TaskIDSchema,
+  ArtifactIDSchema,
   TenantIDSchema,
 } from '@surfgate/contracts'
 import { z } from 'zod'
@@ -19,6 +21,15 @@ export const AUDIT_EVENT_TYPES = [
   'relay.session.revoked',
   'quota.denied',
   'policy.denied',
+  'task.create.requested',
+  'task.queued',
+  'task.started',
+  'task.succeeded',
+  'task.failed',
+  'task.cancelled',
+  'task.retry_scheduled',
+  'artifact.created',
+  'artifact.accessed',
 ] as const
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number]
 export const AuditEventTypeSchema = z.enum(AUDIT_EVENT_TYPES)
@@ -43,6 +54,8 @@ const AuditMetadataSchema = z
       .string()
       .regex(/^[a-z][a-z0-9_]{0,127}$/u)
       .optional(),
+    taskType: z.enum(['extract', 'screenshot', 'pdf']).optional(),
+    attemptCount: z.number().int().nonnegative().max(10).optional(),
   })
   .strict()
   .readonly()
@@ -54,6 +67,8 @@ export const AuditEventSchema = z
     requestID: RequestIDSchema,
     apiKeyID: APIKeyIDSchema.optional(),
     sessionID: SessionIDSchema.optional(),
+    taskID: TaskIDSchema.optional(),
+    artifactID: ArtifactIDSchema.optional(),
     metadata: AuditMetadataSchema.optional(),
     createdAt: z.iso.datetime({ offset: true }),
   })

@@ -548,6 +548,95 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
       ),
     }),
   })
+  const tasks = Object.freeze({
+    requestsPerMinute: boundedInteger(
+      environment,
+      'SURFGATE_TASK_REQUESTS_PER_MINUTE',
+      120,
+      1,
+      100_000,
+      issues,
+    ),
+    maxQueuedPerTenant: boundedInteger(
+      environment,
+      'SURFGATE_TASK_MAX_QUEUED_PER_TENANT',
+      100,
+      1,
+      100_000,
+      issues,
+    ),
+    maxRunningPerTenant: boundedInteger(
+      environment,
+      'SURFGATE_TASK_MAX_RUNNING_PER_TENANT',
+      5,
+      1,
+      1_000,
+      issues,
+    ),
+    maxAttempts: boundedInteger(environment, 'SURFGATE_TASK_MAX_ATTEMPTS', 3, 1, 10, issues),
+    executionTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_TASK_EXECUTION_TIMEOUT_MS',
+      30_000,
+      100,
+      600_000,
+      issues,
+    ),
+    leaseTTLms: boundedInteger(
+      environment,
+      'SURFGATE_TASK_LEASE_TTL_MS',
+      60_000,
+      1_000,
+      900_000,
+      issues,
+    ),
+    pollIntervalMs: boundedInteger(
+      environment,
+      'SURFGATE_TASK_POLL_INTERVAL_MS',
+      250,
+      10,
+      60_000,
+      issues,
+    ),
+    extractMaxBytes: boundedInteger(
+      environment,
+      'SURFGATE_TASK_EXTRACT_MAX_BYTES',
+      1_048_576,
+      1_024,
+      16_777_216,
+      issues,
+    ),
+    artifactMaxBytes: boundedInteger(
+      environment,
+      'SURFGATE_TASK_ARTIFACT_MAX_BYTES',
+      16_777_216,
+      1_024,
+      67_108_864,
+      issues,
+    ),
+    screenshotMaxPixels: boundedInteger(
+      environment,
+      'SURFGATE_TASK_SCREENSHOT_MAX_PIXELS',
+      33_554_432,
+      1_000_000,
+      67_108_864,
+      issues,
+    ),
+    artifactRetentionSeconds: boundedInteger(
+      environment,
+      'SURFGATE_TASK_ARTIFACT_RETENTION_SECONDS',
+      86_400,
+      60,
+      31_536_000,
+      issues,
+    ),
+  })
+  if (tasks.leaseTTLms < tasks.executionTimeoutMs + 15_000) {
+    issues.push({
+      key: 'SURFGATE_TASK_LEASE_TTL_MS',
+      message: 'must exceed the task execution timeout by at least 15000 milliseconds',
+    })
+  }
 
   if (issues.length > 0) {
     throw new ConfigurationError(issues)
@@ -560,6 +649,7 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
     database,
     redis,
     objectStorage,
+    tasks,
     telemetry,
     cloudflare,
     security,

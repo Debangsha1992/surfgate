@@ -16,6 +16,39 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://surfgate:surfgate@127.0.0.1:5432/surfgate_test
+      TEST_DATABASE_URL: postgresql://surfgate:surfgate@127.0.0.1:5432/surfgate_test
+      REDIS_URL: redis://127.0.0.1:6379
+      S3_REGION: auto
+      S3_BUCKET: surfgate-test
+      SURFGATE_RELAY_PUBLIC_URL: ws://127.0.0.1:8081
+      SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      SURFGATE_RELAY_TOKEN_SIGNING_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    services:
+      postgres:
+        image: postgres:17.10-alpine3.24
+        env:
+          POSTGRES_USER: surfgate
+          POSTGRES_PASSWORD: surfgate
+          POSTGRES_DB: surfgate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U surfgate -d surfgate_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:8.8.0-alpine3.23
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -39,3 +72,9 @@ jobs:
 
       - name: Run adversarial security regression
         run: pnpm test:security
+
+      - name: Run managed-task regression
+        run: pnpm test:tasks
+
+      - name: Run database and Redis integration regressions
+        run: pnpm test:integration

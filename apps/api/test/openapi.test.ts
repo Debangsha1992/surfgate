@@ -16,6 +16,9 @@ type SessionOpenAPI = Readonly<{
     '/v1/sessions': Readonly<{ post: Operation }>
     '/v1/sessions/{sessionId}': Readonly<{ get: Operation; delete: Operation }>
     '/v1/sessions/{sessionId}/relay-token': Readonly<{ post: Operation }>
+    '/v1/sessions/{sessionId}/tasks': Readonly<{ post: Operation }>
+    '/v1/tasks/{taskId}': Readonly<{ get: Operation }>
+    '/v1/artifacts/{artifactId}': Readonly<{ get: Operation }>
   }>
 }>
 
@@ -26,6 +29,9 @@ describe('SurfGate v1 OpenAPI', () => {
       '/v1/sessions',
       '/v1/sessions/{sessionId}',
       '/v1/sessions/{sessionId}/relay-token',
+      '/v1/sessions/{sessionId}/tasks',
+      '/v1/tasks/{taskId}',
+      '/v1/artifacts/{artifactId}',
     ])
     expect(document.paths['/v1/sessions'].post.security).toEqual([{ bearerAuth: [] }])
     expect(document.paths['/v1/sessions'].post.parameters).toContainEqual(
@@ -57,6 +63,8 @@ describe('SurfGate v1 OpenAPI', () => {
     )
     const serialized = JSON.stringify(document)
     expect(serialized).toContain('webSocketUrl')
+    expect(serialized).toContain('createManagedTask')
+    expect(serialized).toContain('downloadArtifact')
     expect(serialized).not.toContain('providerSessionReference')
     expect(serialized).not.toContain('apiToken')
   })

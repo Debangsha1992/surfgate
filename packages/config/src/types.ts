@@ -76,6 +76,20 @@ export type ObjectStorageConfig = Readonly<{
   credentials: ObjectStorageCredentials | undefined
 }>
 
+export type ManagedTaskConfig = Readonly<{
+  requestsPerMinute: number
+  maxQueuedPerTenant: number
+  maxRunningPerTenant: number
+  maxAttempts: number
+  executionTimeoutMs: number
+  leaseTTLms: number
+  pollIntervalMs: number
+  extractMaxBytes: number
+  artifactMaxBytes: number
+  screenshotMaxPixels: number
+  artifactRetentionSeconds: number
+}>
+
 export type TelemetryConfig = Readonly<{
   serviceName: string
   endpoint: URL | undefined
@@ -98,6 +112,7 @@ export type SurfGateConfig = Readonly<{
   database: DatabaseConfig
   redis: RedisConfig
   objectStorage: ObjectStorageConfig
+  tasks: ManagedTaskConfig
   telemetry: TelemetryConfig
   cloudflare: CloudflareConfig
   security: SecurityConfig

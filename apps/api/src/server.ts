@@ -1,5 +1,9 @@
 import type { SurfGateConfig } from '@surfgate/config'
-import { NOOP_CONTROL_PLANE_TELEMETRY, type ControlPlaneTelemetry } from '@surfgate/observability'
+import {
+  NOOP_CONTROL_PLANE_TELEMETRY,
+  type ControlPlaneTelemetry,
+  type ManagedTaskTelemetry,
+} from '@surfgate/observability'
 
 import {
   buildAPIApplication,
@@ -25,6 +29,9 @@ import { createChromiumBrowserProvider } from '@surfgate/provider-chromium'
 import type { BrowserProvider } from '@surfgate/provider-core'
 import { ProviderRegistry } from './providers/provider-registry.js'
 import { SessionService } from './services/session-service.js'
+import { TaskService } from './services/task-service.js'
+import { PostgresManagedTaskRepository } from '@surfgate/task-postgres'
+import { createS3ArtifactStorage } from '@surfgate/object-storage'
 
 export interface APIServer {
   start(): Promise<void>
@@ -53,6 +60,7 @@ export function createAPIServer(
   options: Readonly<{
     database?: Database
     telemetry?: ControlPlaneTelemetry
+    taskTelemetry?: ManagedTaskTelemetry
     logger?: APIApplicationDependencies['logger']
     listen?: (options: ListenOptions) => Promise<void>
     redis?: ControlPlaneRedisStore
@@ -99,11 +107,26 @@ export function createAPIServer(
       tokenTTLSeconds: config.relay.tokenTTLSeconds,
     },
   })
+  const taskRepository = new PostgresManagedTaskRepository(database)
+  const taskService = new TaskService({
+    sessions: new PostgresSessionRepository(database),
+    tasks: taskRepository,
+    audit: new PostgresAuditEventRepository(database),
+    capabilitiesForRuntime(runtimeClass) {
+      return providers
+        .find((provider) => provider.descriptor().runtimeClass === runtimeClass)
+        ?.descriptor().capabilities
+    },
+    config: config.tasks,
+    ...(options.taskTelemetry === undefined ? {} : { telemetry: options.taskTelemetry }),
+    storage: createS3ArtifactStorage(config.objectStorage),
+  })
   const app = buildAPIApplication({
     databaseHealth: database,
     redisHealth: redis,
     authenticate,
     sessionService,
+    taskService,
     telemetry,
     logger:
       options.logger ??

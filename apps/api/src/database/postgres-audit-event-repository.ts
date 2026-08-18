@@ -8,13 +8,15 @@ export class PostgresAuditEventRepository implements AuditEventRepository {
     const validated = AuditEventSchema.parse(event)
     await this.database.query(
       `insert into audit_events
-        (tenant_id, event_type, request_id, session_id, api_key_id, metadata, created_at)
-       values ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+        (tenant_id, event_type, request_id, session_id, task_id, artifact_id, api_key_id, metadata, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
       [
         validated.tenantID,
         validated.type,
         validated.requestID,
         validated.sessionID ?? null,
+        validated.taskID ?? null,
+        validated.artifactID ?? null,
         validated.apiKeyID ?? null,
         JSON.stringify(validated.metadata ?? {}),
         validated.createdAt,

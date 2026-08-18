@@ -20,6 +20,8 @@ flowchart TD
     DB[(PostgreSQL)]
     Redis[(Redis)]
     Relay[Authenticated CDP Relay]
+    Worker[Managed Task Worker]
+    Objects[(Private S3 / R2)]
 
     Client --> API
     API --> Router
@@ -32,6 +34,10 @@ flowchart TD
     Relay --> C
     Relay --> DB
     Relay --> Redis
+    Worker --> K
+    Worker --> C
+    Worker --> DB
+    Worker --> Objects
 ```
 
 The control plane authenticates clients, validates requests, applies quotas and idempotency, records routing decisions, allocates through the provider interface, persists session state, and emits audit and telemetry events. The router remains pure domain logic and never performs network or database operations.
@@ -56,8 +62,11 @@ The current implementation includes:
 - Independently deployable authenticated CDP WebSocket relay
 - One-controller-per-session Redis coordination and distributed revocation
 - Bounded bidirectional streaming with frame, queue, idle, session, and absolute limits
+- Durable provider-neutral extract, screenshot, and PDF task contracts and state transitions
+- Independently runnable PostgreSQL-leased managed-task worker with bounded retries
+- Private S3/R2-compatible artifact storage with authenticated tenant-scoped downloads
 
-Managed task execution is not implemented yet. Clients connect to the SurfGate relay and never receive upstream provider WebSocket endpoints or Cloudflare credentials.
+Clients can either control an active browser through the relay or enqueue a bounded managed task against that existing session. Managed tasks never reroute or allocate a replacement runtime after browser interaction begins. Clients never receive upstream provider WebSocket endpoints or Cloudflare credentials.
 
 ## Repository Structure
 
@@ -65,7 +74,7 @@ Managed task execution is not implemented yet. Clients connect to the SurfGate r
 apps/
   api/                    Fastify control plane and persistence
   relay/                  Authenticated bounded CDP data plane
-  worker/                 Managed-task package boundary; implementation pending
+  worker/                 Independently deployable managed-task executor
 
 packages/
   contracts/              Public schemas, IDs, capabilities, and errors
@@ -77,6 +86,9 @@ packages/
   provider-chromium/      Chromium adapter
   security/               Target policy, relay tokens, and protected references
   observability/          Structured control-plane and relay telemetry interfaces
+  task-core/              Provider-neutral task lifecycle and execution ports
+  task-postgres/          Durable task claiming, leases, and artifact metadata
+  object-storage/         Private S3/R2-compatible artifact adapter
   testing/                Fake provider and shared conformance suite
 ```
 
@@ -102,6 +114,12 @@ Before starting the API or relay, set both `SURFGATE_PROVIDER_SESSION_ENCRYPTION
 ```bash
 pnpm --filter @surfgate/api db:migrate
 pnpm dev
+```
+
+The root development command starts all persistent workspace processes through Turbo. To run only the task worker after migrations:
+
+```bash
+pnpm --filter @surfgate/worker dev
 ```
 
 Keep `.env` local. Cloudflare account credentials are optional for ordinary builds and deterministic tests; they are required only for separately gated live Kitesurf, Chromium, or control-plane provider tests.
@@ -132,6 +150,7 @@ pnpm test:conformance
 pnpm test:security
 pnpm --filter @surfgate/router test:golden
 pnpm test:relay-load
+pnpm test:tasks
 ```
 
 Integration tests require Redis and an isolated PostgreSQL database whose name ends in `_test`. Create the local test database once and run the suite with:
@@ -157,6 +176,9 @@ Implemented HTTP endpoints:
 - `GET /v1/sessions/:sessionId`
 - `DELETE /v1/sessions/:sessionId`
 - `POST /v1/sessions/:sessionId/relay-token`
+- `POST /v1/sessions/:sessionId/tasks`
+- `GET /v1/tasks/:taskId`
+- `GET /v1/artifacts/:artifactId`
 
 Session endpoints require tenant-scoped bearer authentication. Session creation also requires an `Idempotency-Key` header. The service publishes its runtime-schema-derived OpenAPI contract at `/openapi.json`.
 
@@ -173,6 +195,10 @@ The relay exposes separate `/health/live` and `/health/ready` endpoints. During 
 - Keep provider-session encryption-key rotation separate from relay-token signing-key rotation; neither key may be reused for the other purpose.
 
 The integration suite includes a browser-download-free Playwright Core `connectOverCDP` compatibility test. It verifies that a standard CDP client can authenticate to SurfGate through an upgrade header without learning the provider authorization credential.
+
+Managed task creation requires `tasks:write` and an `Idempotency-Key`; status reads require `tasks:read`; artifact downloads require `artifacts:read`. Only active, unexpired, tenant-owned sessions accept tasks. Durable task delivery is at least once: the idempotency key prevents duplicate task creation, while a worker may repeat the same bounded read-only browser operation after a lost lease or uncertain persistence result. SurfGate does not claim exactly-once browser execution.
+
+Screenshot and PDF bytes are kept out of PostgreSQL and public JSON, stored under attempt-unique private object keys, integrity-checked on tenant-authorized access, and assigned a configurable expiry. Cloudflare R2 encrypts objects at rest automatically; deployments must also enforce a bucket-level public-access block/private policy and lifecycle rules. The current worker cleans known losing attempts; automatic collection of expired artifacts or objects left by uncertain storage/database outcomes remains a deployment/reconciliation responsibility.
 
 ## Routing
 

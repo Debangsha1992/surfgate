@@ -14,12 +14,15 @@ describeWithDatabase('control-plane migrations', () => {
       [
         [
           'api_keys',
+          'artifacts',
           'audit_events',
+          'managed_tasks',
           'routing_decisions',
           'session_allocation_attempts',
           'session_create_idempotency',
           'sessions',
           'surfgate_migrations',
+          'task_create_idempotency',
           'tenants',
         ],
       ],
@@ -27,12 +30,15 @@ describeWithDatabase('control-plane migrations', () => {
 
     expect(rows.map((row) => row.table_name)).toEqual([
       'api_keys',
+      'artifacts',
       'audit_events',
+      'managed_tasks',
       'routing_decisions',
       'session_allocation_attempts',
       'session_create_idempotency',
       'sessions',
       'surfgate_migrations',
+      'task_create_idempotency',
       'tenants',
     ])
   })

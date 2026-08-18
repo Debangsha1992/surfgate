@@ -1,0 +1,25 @@
+{
+  "name": "@surfgate/task-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --config ../../vitest.config.ts --root .",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@surfgate/contracts": "workspace:*",
+    "@surfgate/provider-core": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

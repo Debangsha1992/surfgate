@@ -15,6 +15,8 @@ import { SessionTransitionError } from './domain/session.js'
 import type { AuthenticateAPIKey } from './http/authentication-hook.js'
 import { registerSessionRoutes } from './http/session-routes.js'
 import type { SessionService } from './services/session-service.js'
+import type { TaskService } from './services/task-service.js'
+import { registerTaskRoutes } from './http/task-routes.js'
 import { RateLimitDependencyError, RateLimitExceededError } from './quota/rate-limiter.js'
 import { TargetPolicyError } from '@surfgate/security'
 import { SENSITIVE_LOG_PATHS } from '@surfgate/security'
@@ -43,6 +45,7 @@ export type APIApplicationDependencies = Readonly<{
   redisHealth?: DatabaseHealth
   authenticate?: AuthenticateAPIKey
   sessionService?: SessionService
+  taskService?: TaskService
 }>
 
 function classifyError(error: unknown): Readonly<{ code: SurfGateErrorCode; statusCode: number }> {
@@ -166,6 +169,13 @@ export function buildAPIApplication(dependencies: APIApplicationDependencies): F
     registerSessionRoutes(app, {
       authenticate: dependencies.authenticate,
       service: dependencies.sessionService,
+      telemetry,
+    })
+  }
+  if (dependencies.authenticate !== undefined && dependencies.taskService !== undefined) {
+    registerTaskRoutes(app, {
+      authenticate: dependencies.authenticate,
+      service: dependencies.taskService,
       telemetry,
     })
   }

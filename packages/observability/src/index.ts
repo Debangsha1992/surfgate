@@ -79,3 +79,23 @@ export const NOOP_RELAY_TELEMETRY: RelayTelemetry = Object.freeze({
   recordTraffic(): void {},
   setActiveConnections(): void {},
 })
+
+export type ManagedTaskObservation = Readonly<{
+  event: 'create' | 'claim' | 'execute' | 'retry' | 'artifact_upload' | 'artifact_access'
+  taskType?: 'extract' | 'screenshot' | 'pdf'
+  outcome: 'success' | 'failure'
+  durationMs: number
+  attemptCount?: number
+  reasonCode?: string
+  bytes?: number
+}>
+
+export interface ManagedTaskTelemetry {
+  recordTask(input: ManagedTaskObservation): void
+  setActiveTasks(value: number): void
+}
+
+export const NOOP_MANAGED_TASK_TELEMETRY: ManagedTaskTelemetry = Object.freeze({
+  recordTask(): void {},
+  setActiveTasks(): void {},
+})
