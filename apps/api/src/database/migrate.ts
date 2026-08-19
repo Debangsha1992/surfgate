@@ -53,43 +53,36 @@ function assertChecksum(
 }
 
 async function runOnlineIndexMigration(
-  database: Database,
+  connection: Queryable,
   filename: string,
   sql: string,
   expectedChecksum: string,
   indexName: string,
 ): Promise<void> {
-  await database.connection(async (connection) => {
-    await connection.query('select pg_advisory_lock($1)', [MIGRATION_LOCK_ID])
-    try {
-      if (assertChecksum(filename, await appliedMigration(connection, filename), expectedChecksum))
-        return
-      await connection.query(`select set_config('statement_timeout', $1, false)`, [
-        String(ONLINE_MIGRATION_TIMEOUT_MS),
-      ])
-      await connection.query(`select set_config('lock_timeout', '5000', false)`)
-      const indexes = await connection.query<{ exists: boolean }>(
-        `select exists(
+  if (assertChecksum(filename, await appliedMigration(connection, filename), expectedChecksum))
+    return
+  await connection.query(`select set_config('statement_timeout', $1, false)`, [
+    String(ONLINE_MIGRATION_TIMEOUT_MS),
+  ])
+  await connection.query(`select set_config('lock_timeout', '5000', false)`)
+  const indexes = await connection.query<{ exists: boolean }>(
+    `select exists(
            select 1 from pg_class index_class
            join pg_index index_definition on index_definition.indexrelid = index_class.oid
            where index_class.relname = $1 and pg_table_is_visible(index_class.oid)
          ) as exists`,
-        [indexName],
-      )
-      // A process can stop after CREATE INDEX CONCURRENTLY but before the ledger write. Recreate
-      // any unledgered reserved name so a manual or invalid look-alike can never imply readiness.
-      if (indexes[0]?.exists === true) {
-        await connection.query(`drop index concurrently if exists "${indexName}"`)
-      }
-      await connection.query(sql)
-      await connection.query('insert into surfgate_migrations (name, checksum) values ($1, $2)', [
-        filename,
-        expectedChecksum,
-      ])
-    } finally {
-      await connection.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK_ID])
-    }
-  })
+    [indexName],
+  )
+  // A process can stop after CREATE INDEX CONCURRENTLY but before the ledger write. Recreate
+  // any unledgered reserved name so a manual or invalid look-alike can never imply readiness.
+  if (indexes[0]?.exists === true) {
+    await connection.query(`drop index concurrently if exists "${indexName}"`)
+  }
+  await connection.query(sql)
+  await connection.query('insert into surfgate_migrations (name, checksum) values ($1, $2)', [
+    filename,
+    expectedChecksum,
+  ])
 }
 
 export async function runMigrations(database: Database, directory: string): Promise<void> {
@@ -100,29 +93,47 @@ export async function runMigrations(database: Database, directory: string): Prom
   }
   const filenames = sqlFilenames.toSorted()
 
-  await database.transaction(async (transaction) => {
-    await ensureLedger(transaction)
-  })
+  await database.connection(async (lockConnection) => {
+    await lockConnection.query('select pg_advisory_lock($1)', [MIGRATION_LOCK_ID])
+    try {
+      await database.transaction(async (transaction) => {
+        await ensureLedger(transaction)
+      })
 
-  for (const filename of filenames) {
-    const sql = readFileSync(join(directory, filename), 'utf8')
-    const expectedChecksum = checksum(sql)
-    const onlineIndexName = ONLINE_INDEX_DIRECTIVE.exec(sql)?.[1]
-    if (onlineIndexName !== undefined) {
-      await runOnlineIndexMigration(database, filename, sql, expectedChecksum, onlineIndexName)
-      continue
+      for (const filename of filenames) {
+        const sql = readFileSync(join(directory, filename), 'utf8')
+        const expectedChecksum = checksum(sql)
+        const onlineIndexName = ONLINE_INDEX_DIRECTIVE.exec(sql)?.[1]
+        if (onlineIndexName !== undefined) {
+          await runOnlineIndexMigration(
+            lockConnection,
+            filename,
+            sql,
+            expectedChecksum,
+            onlineIndexName,
+          )
+          continue
+        }
+        await database.transaction(async (transaction) => {
+          if (
+            assertChecksum(
+              filename,
+              await appliedMigration(transaction, filename),
+              expectedChecksum,
+            )
+          )
+            return
+          await transaction.query(sql)
+          await transaction.query(
+            'insert into surfgate_migrations (name, checksum) values ($1, $2)',
+            [filename, expectedChecksum],
+          )
+        })
+      }
+    } finally {
+      await lockConnection.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK_ID])
     }
-    await database.transaction(async (transaction) => {
-      await transaction.query('select pg_advisory_xact_lock($1)', [MIGRATION_LOCK_ID])
-      if (assertChecksum(filename, await appliedMigration(transaction, filename), expectedChecksum))
-        return
-      await transaction.query(sql)
-      await transaction.query('insert into surfgate_migrations (name, checksum) values ($1, $2)', [
-        filename,
-        expectedChecksum,
-      ])
-    })
-  }
+  })
 }
 
 export async function runConfiguredMigrations(): Promise<void> {
