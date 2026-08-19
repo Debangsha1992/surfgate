@@ -1,0 +1,58 @@
+version: 1
+description: Vendor-neutral SurfGate alert specification; translate these symptoms into the deployed monitoring backend.
+alerts:
+  - id: api-error-budget-burn
+    severity: page
+    signal: surfgate.http.requests
+    condition: Eligible 5xx ratio burns the 99.9% API availability budget at 14x for 5m and 1h, or 6x for 30m and 6h.
+    runbook: runbooks.md#api-or-session-creation-failures
+  - id: session-allocation-failures
+    severity: page
+    signal: surfgate.operation.attempts
+    condition: provider.allocate failure ratio exceeds 10% for 10m with at least 20 attempts.
+    runbook: runbooks.md#api-or-session-creation-failures
+  - id: both-providers-unavailable
+    severity: page
+    signal: surfgate.operation.attempts
+    condition: Both runtime health outcomes are unavailable for 5m, or no-compatible-runtime rises above its normal baseline for 10m.
+    runbook: runbooks.md#provider-unavailable
+  - id: postgresql-unavailable
+    severity: page
+    signal: surfgate.dependency.ready
+    condition: PostgreSQL readiness is 0 for 2m on any serving component.
+    runbook: runbooks.md#postgresql-unavailable
+  - id: redis-unavailable
+    severity: page
+    signal: surfgate.dependency.ready
+    condition: Redis readiness is 0 for 2m on API or relay.
+    runbook: runbooks.md#redis-unavailable
+  - id: relay-abnormal-close-spike
+    severity: page
+    signal: surfgate.relay.connections
+    condition: Abnormal, upstream, backpressure, or timeout close ratio exceeds 10% for 10m with at least 50 connections.
+    runbook: runbooks.md#relay-failures-or-backpressure
+  - id: relay-connection-saturation
+    severity: ticket
+    signal: surfgate.relay.active_connections
+    condition: Active connections exceed 80% of the deployment-tested capacity for 15m.
+    runbook: runbooks.md#relay-failures-or-backpressure
+  - id: task-queue-backlog
+    severity: ticket
+    signal: surfgate.task.queue.duration
+    condition: p95 queue latency exceeds 30s for 15m or queued work grows for three consecutive windows.
+    runbook: runbooks.md#task-backlog-stuck-work-or-retries
+  - id: task-retry-spike
+    severity: ticket
+    signal: surfgate.task.events
+    condition: Retry or lease-recovery events exceed 10% of task attempts for 15m.
+    runbook: runbooks.md#task-backlog-stuck-work-or-retries
+  - id: artifact-storage-failures
+    severity: page
+    signal: surfgate.task.events
+    condition: artifact_upload failures exceed 5% for 10m with at least 20 attempts.
+    runbook: runbooks.md#artifact-storage-unavailable
+  - id: telemetry-export-loss
+    severity: ticket
+    signal: collector_export_failures
+    condition: The deployment telemetry collector reports sustained export failure or no data from a ready SurfGate service for 15m.
+    runbook: runbooks.md#telemetry-exporter-unavailable

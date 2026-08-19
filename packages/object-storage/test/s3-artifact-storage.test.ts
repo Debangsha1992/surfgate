@@ -7,6 +7,23 @@ const VALID_KEY =
   'v1/ten_01ARZ3NDEKTSV4RRFFQ69G5FAV/tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV/art_01ARZ3NDEKTSV4RRFFQ69G5FAV/a1-0123456789abcdef'
 
 describe('S3 artifact storage', () => {
+  it('exposes a normalized bounded readiness probe', async () => {
+    const ready = createS3ArtifactStorage(
+      { region: 'auto', bucket: 'private-bucket', endpoint: undefined, credentials: undefined },
+      { send: () => Promise.resolve({}) },
+    )
+    const unavailable = createS3ArtifactStorage(
+      { region: 'auto', bucket: 'private-bucket', endpoint: undefined, credentials: undefined },
+      { send: () => Promise.reject(new Error('Bearer storage-secret')) },
+    )
+
+    if (ready.health === undefined || unavailable.health === undefined) {
+      throw new Error('Artifact storage readiness probe is required')
+    }
+    await expect(ready.health()).resolves.toBe('ready')
+    await expect(unavailable.health()).resolves.toBe('unavailable')
+  })
+
   it('uses an R2-compatible private object request without unsupported ACL or SSE headers', async () => {
     const commands: unknown[] = []
     const storage = createS3ArtifactStorage(

@@ -1,18 +1,33 @@
 import { loadConfig } from '@surfgate/config'
+import { createTelemetryRuntime } from '@surfgate/observability'
 
 import { createAPIServer } from './server.js'
 
 async function main(): Promise<void> {
-  const server = createAPIServer(loadConfig())
+  const config = loadConfig()
+  if (
+    config.security.providerSessionEncryption === undefined ||
+    config.security.relayTokenSigning === undefined
+  ) {
+    throw new Error('API security configuration is incomplete.')
+  }
+  const observability = createTelemetryRuntime(config.telemetry, 'api')
+  const server = createAPIServer(config, {
+    telemetry: observability.controlPlane,
+    taskTelemetry: observability.managedTasks,
+  })
   let shuttingDown = false
   const shutdown = (): void => {
     if (shuttingDown) {
       return
     }
     shuttingDown = true
-    server.close().catch(() => {
-      process.exitCode = 1
-    })
+    server
+      .close()
+      .then(() => observability.shutdown())
+      .catch(() => {
+        process.exitCode = 1
+      })
   }
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
@@ -20,6 +35,7 @@ async function main(): Promise<void> {
     await server.start()
   } catch (error: unknown) {
     await server.close()
+    await observability.shutdown()
     throw error
   }
 }

@@ -148,6 +148,7 @@ export class SessionService {
       terminationReason: null,
       version: 0,
     })
+    const idempotencyStartedAt = performance.now()
     let claim = await this.#dependencies.coordinator.claim({
       tenantID: context.tenantID,
       key,
@@ -159,8 +160,15 @@ export class SessionService {
       session: initial,
       maxConcurrentSessions: this.#dependencies.config.quotas.maxConcurrentSessions,
     })
-    if (claim.kind === 'conflict')
+    if (claim.kind === 'conflict') {
+      this.#recordOperation({
+        operation: 'surfgate.idempotency.resolve',
+        outcome: 'failure',
+        durationMs: Math.max(0, performance.now() - idempotencyStartedAt),
+        reasonCode: 'VALIDATION_IDEMPOTENCY_CONFLICT',
+      })
       throw new ControlPlaneHTTPError('VALIDATION_IDEMPOTENCY_CONFLICT', 409)
+    }
     if (claim.kind === 'quota_exceeded') {
       await this.#audit(context, 'quota.denied', now)
       throw new ControlPlaneHTTPError('QUOTA_CONCURRENT_SESSION_LIMIT', 429)
@@ -173,6 +181,11 @@ export class SessionService {
         timeoutMs: this.#dependencies.config.idempotencyWaitTimeoutMs,
       })
     }
+    this.#recordOperation({
+      operation: 'surfgate.idempotency.resolve',
+      outcome: 'success',
+      durationMs: Math.max(0, performance.now() - idempotencyStartedAt),
+    })
     if (claim.kind === 'existing') {
       if (claim.state === 'in_progress') {
         throw new ControlPlaneHTTPError('INTERNAL_DEPENDENCY_UNAVAILABLE', 503)
@@ -234,10 +247,23 @@ export class SessionService {
         ...(targetURL === undefined ? {} : { targetUrl: targetURL }),
       })
       session = await this.#transition(session, { type: 'begin_routing', at: now })
+      const healthStartedAt = performance.now()
       const sources = await this.#dependencies.registry.routingSources({
         timeoutMs: this.#dependencies.config.healthTimeoutMs,
         ...(signal === undefined ? {} : { signal }),
       })
+      const healthDurationMs = Math.max(0, performance.now() - healthStartedAt)
+      for (const source of sources) {
+        this.#recordOperation({
+          operation: 'surfgate.provider.health',
+          outcome: source.health.status === 'unavailable' ? 'failure' : 'success',
+          durationMs: healthDurationMs,
+          runtimeClass: source.descriptor.runtimeClass,
+          providerID: source.descriptor.providerID,
+          healthState: source.health.status,
+          reasonCode: source.health.diagnosticCode,
+        })
+      }
       const routingStarted = performance.now()
       const decision = routeBrowserRuntime(
         RoutingInputSchema.parse({
@@ -263,12 +289,26 @@ export class SessionService {
         operation: 'surfgate.routing.decide',
         outcome: 'success',
         durationMs: Math.max(0, performance.now() - routingStarted),
+        policyVersion: decision.policyVersion,
+        ...(decision.selectedCandidate === null
+          ? { reasonCode: 'ROUTING_NO_COMPATIBLE_RUNTIME' }
+          : {
+              runtimeClass: decision.selectedCandidate.runtimeClass,
+              providerID: decision.selectedCandidate.providerID,
+            }),
+      })
+      this.#dependencies.telemetry?.recordRoutingDecision?.({
+        outcome: decision.selectedCandidate === null ? 'no_compatible_runtime' : 'selected',
+        policyVersion: decision.policyVersion,
         ...(decision.selectedCandidate === null
           ? {}
           : {
               runtimeClass: decision.selectedCandidate.runtimeClass,
               providerID: decision.selectedCandidate.providerID,
             }),
+        rejectedReasonCodes: decision.rejectedCandidates.flatMap(
+          (candidate) => candidate.reasonCodes,
+        ),
       })
       await this.#dependencies.decisions.saveRoutingDecisionForTenant({
         tenantID: context.tenantID,
@@ -427,6 +467,8 @@ export class SessionService {
         )
         .catch(() => undefined)
     }
+    let terminationObservation:
+      Readonly<{ startedAt: number; runtimeClass: string; providerID: string }> | undefined
     try {
       if (session.providerSessionReferenceEncrypted === null) throw new Error('missing reference')
       const protectedSession = this.#dependencies.protector.decrypt(
@@ -435,6 +477,11 @@ export class SessionService {
       )
       const provider = this.#dependencies.registry.resolve(protectedSession.candidate)
       const terminationStarted = performance.now()
+      terminationObservation = {
+        startedAt: terminationStarted,
+        runtimeClass: protectedSession.session.reference.runtimeClass,
+        providerID: protectedSession.session.reference.providerID,
+      }
       await provider.terminate(protectedSession.session.reference, {
         timeoutMs: this.#dependencies.config.terminationTimeoutMs,
         ...(signal === undefined ? {} : { signal }),
@@ -464,6 +511,16 @@ export class SessionService {
       await this.#audit(context, 'session.terminated', this.#now().toISOString(), session.id)
       return SessionTerminationResponseSchema.parse({ session: await this.#public(session) })
     } catch (error: unknown) {
+      if (terminationObservation !== undefined) {
+        this.#recordOperation({
+          operation: 'surfgate.provider.terminate',
+          outcome: 'failure',
+          durationMs: Math.max(0, performance.now() - terminationObservation.startedAt),
+          runtimeClass: terminationObservation.runtimeClass,
+          providerID: terminationObservation.providerID,
+          ...(error instanceof ProviderError ? { reasonCode: error.code } : {}),
+        })
+      }
       await this.#audit(context, 'session.terminate.failed', this.#now().toISOString(), session.id)
       throw error instanceof ProviderError
         ? providerHTTPError(error)
@@ -520,6 +577,14 @@ export class SessionService {
       await this.#audit(context, 'routing.fallback', fallbackAt, session.id, {
         failureClass: classification.failureClass,
         fallbackRuntime: fallback.runtimeClass,
+      })
+      this.#recordOperation({
+        operation: 'surfgate.routing.fallback',
+        outcome: 'success',
+        durationMs: 0,
+        runtimeClass: fallback.runtimeClass,
+        providerID: fallback.providerID,
+        reasonCode: classification.failureClass,
       })
       try {
         return await this.#allocate(
@@ -578,25 +643,38 @@ export class SessionService {
     })
     const provider = this.#dependencies.registry.resolve(candidate)
     const allocationStarted = performance.now()
-    const providerSession = await provider.allocate(
-      {
-        requestID: context.requestID,
+    let providerSession: Awaited<ReturnType<typeof provider.allocate>>
+    try {
+      providerSession = await provider.allocate(
+        {
+          requestID: context.requestID,
+          runtimeClass: candidate.runtimeClass,
+          requirements: request.capabilities,
+          allowExperimental: request.runtime.allowExperimental,
+          maxSessionDurationMs: request.maxDurationSeconds * 1_000,
+          ...(validatedTargetURL === undefined ? {} : { targetURL: validatedTargetURL }),
+          ...(candidate.region === undefined ? {} : { region: candidate.region }),
+          ...(candidate.configProfile === undefined
+            ? {}
+            : { configProfile: candidate.configProfile }),
+          metadata: { operationName: 'provider.allocate' },
+        },
+        {
+          timeoutMs: this.#dependencies.config.allocationTimeoutMs,
+          ...(signal === undefined ? {} : { signal }),
+        },
+      )
+    } catch (error: unknown) {
+      this.#recordOperation({
+        operation: 'surfgate.provider.allocate',
+        outcome: 'failure',
+        durationMs: Math.max(0, performance.now() - allocationStarted),
         runtimeClass: candidate.runtimeClass,
-        requirements: request.capabilities,
-        allowExperimental: request.runtime.allowExperimental,
-        maxSessionDurationMs: request.maxDurationSeconds * 1_000,
-        ...(validatedTargetURL === undefined ? {} : { targetURL: validatedTargetURL }),
-        ...(candidate.region === undefined ? {} : { region: candidate.region }),
-        ...(candidate.configProfile === undefined
-          ? {}
-          : { configProfile: candidate.configProfile }),
-        metadata: { operationName: 'provider.allocate' },
-      },
-      {
-        timeoutMs: this.#dependencies.config.allocationTimeoutMs,
-        ...(signal === undefined ? {} : { signal }),
-      },
-    )
+        providerID: candidate.providerID,
+        ...(error instanceof ProviderError ? { reasonCode: error.code } : {}),
+      })
+      throw error
+    }
     let encrypted: string | undefined
     try {
       encrypted = this.#dependencies.protector.encrypt(providerSession, candidate, {

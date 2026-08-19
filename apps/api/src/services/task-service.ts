@@ -140,6 +140,9 @@ export class TaskService {
       id: this.#ids.task(),
       tenantID: context.tenantID,
       sessionID,
+      traceParent:
+        (this.dependencies.telemetry ?? NOOP_MANAGED_TASK_TELEMETRY).captureTraceContext?.()
+          ?.traceparent ?? null,
       request,
       status: 'queued',
       attemptCount: 0,
@@ -210,6 +213,7 @@ export class TaskService {
   }
 
   async getArtifact(context: AuthenticatedTenantContext, rawArtifactID: ArtifactID) {
+    const accessStartedAt = performance.now()
     const artifact = await this.dependencies.tasks.findArtifactForTenant(
       context.tenantID,
       ArtifactIDSchema.parse(rawArtifactID),
@@ -228,6 +232,12 @@ export class TaskService {
         AbortSignal.timeout(this.dependencies.config.executionTimeoutMs),
       )
     } catch {
+      this.#record({
+        event: 'artifact_access',
+        outcome: 'failure',
+        durationMs: Math.max(0, performance.now() - accessStartedAt),
+        reasonCode: 'ARTIFACT_UNAVAILABLE',
+      })
       throw new ControlPlaneHTTPError('ARTIFACT_UNAVAILABLE', 503)
     }
     if (
@@ -236,6 +246,12 @@ export class TaskService {
       object.bytes.byteLength !== artifact.byteSize ||
       createHash('sha256').update(object.bytes).digest('hex') !== artifact.sha256
     ) {
+      this.#record({
+        event: 'artifact_access',
+        outcome: 'failure',
+        durationMs: Math.max(0, performance.now() - accessStartedAt),
+        reasonCode: 'ARTIFACT_UNAVAILABLE',
+      })
       throw new ControlPlaneHTTPError('ARTIFACT_UNAVAILABLE', 503)
     }
     await this.dependencies.audit.append({
@@ -251,7 +267,7 @@ export class TaskService {
     this.#record({
       event: 'artifact_access',
       outcome: 'success',
-      durationMs: 0,
+      durationMs: Math.max(0, performance.now() - accessStartedAt),
       bytes: object.bytes.byteLength,
     })
     return Object.freeze({

@@ -56,11 +56,25 @@ export function registerHealthRoutes(
       },
     },
     async (_request, reply) => {
+      const postgresStartedAt = performance.now()
       const postgres = await checkDatabaseHealth(dependencies.databaseHealth, timeoutMs)
+      dependencies.telemetry.recordDependencyHealth?.({
+        dependency: 'postgresql',
+        status: postgres,
+        durationMs: Math.max(0, performance.now() - postgresStartedAt),
+      })
+      const redisStartedAt = performance.now()
       const redis =
         dependencies.redisHealth === undefined
           ? undefined
           : await checkDatabaseHealth(dependencies.redisHealth, timeoutMs)
+      if (redis !== undefined) {
+        dependencies.telemetry.recordDependencyHealth?.({
+          dependency: 'redis',
+          status: redis,
+          durationMs: Math.max(0, performance.now() - redisStartedAt),
+        })
+      }
       dependencies.telemetry.recordDatabaseHealth(postgres)
       const response = validatePublicResponse(ReadinessResponseSchema, {
         status: postgres === 'ready' && redis !== 'unavailable' ? 'ready' : 'not_ready',

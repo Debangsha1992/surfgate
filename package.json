@@ -18,6 +18,7 @@
     "test:relay-load": "pnpm --filter @surfgate/relay test:load",
     "test:tasks": "pnpm --filter @surfgate/contracts test && pnpm --filter @surfgate/config test && pnpm --filter @surfgate/task-core test && pnpm --filter @surfgate/object-storage test && pnpm --filter @surfgate/api test -- task && pnpm --filter @surfgate/worker test",
     "test:security": "pnpm --filter @surfgate/security test:security && pnpm --filter @surfgate/api test:security && pnpm --filter @surfgate/relay test:security",
+    "test:observability": "pnpm --filter @surfgate/observability test && pnpm --filter @surfgate/worker test -- health-server",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"

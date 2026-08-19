@@ -3,6 +3,7 @@ import { Writable } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
 import { LivenessResponseSchema, RequestIDSchema } from '@surfgate/contracts'
+import type { StartTelemetrySpan, TraceContextCarrier } from '@surfgate/observability'
 
 import { FASTIFY_LOG_REDACTION_PATHS, buildAPIApplication } from '../src/app.js'
 import { validatePublicResponse } from '../src/http/validation.js'
@@ -88,6 +89,41 @@ describe('Fastify control-plane foundation', () => {
     expect(propagated.headers['x-request-id']).toBe(REQUEST_ID)
     expect(RequestIDSchema.safeParse(replaced.headers['x-request-id']).success).toBe(true)
     expect(replaced.headers['x-request-id']).not.toBe('attacker-controlled-value')
+    await app.close()
+  })
+
+  it('continues an incoming W3C trace and completes the request span', async () => {
+    const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+    const end = vi.fn()
+    let receivedParent: TraceContextCarrier | undefined
+    const startSpan: StartTelemetrySpan = (_name, _attributes, parent) => {
+      receivedParent = parent
+      return {
+        run<Result>(operation: () => Result): Result {
+          return operation()
+        },
+        context: () => ({ traceparent }),
+        end,
+      }
+    }
+    const app = buildAPIApplication({
+      databaseHealth: { health: vi.fn(() => Promise.resolve('ready' as const)) },
+      telemetry: { ...createTelemetry(), startSpan },
+      logger: false,
+    })
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/health/live',
+      headers: { traceparent },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(receivedParent).toEqual({ traceparent })
+    expect(end).toHaveBeenCalledWith('success', {
+      route: '/health/live',
+      statusCode: 200,
+    })
     await app.close()
   })
 

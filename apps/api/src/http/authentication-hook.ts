@@ -1,5 +1,5 @@
 import { RequestIDSchema } from '@surfgate/contracts'
-import type { ControlPlaneTelemetry } from '@surfgate/observability'
+import type { ControlPlaneTelemetry, TelemetrySpan } from '@surfgate/observability'
 import type { preHandlerAsyncHookHandler } from 'fastify'
 
 import type { APIKeyScope } from '../auth/api-key.js'
@@ -18,6 +18,7 @@ declare module 'fastify' {
   interface FastifyRequest {
     auth: AuthenticatedTenantContext
     startedAtMonotonic: number
+    telemetrySpan: TelemetrySpan | undefined
   }
 }
 

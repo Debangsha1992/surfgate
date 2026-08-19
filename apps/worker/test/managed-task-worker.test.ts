@@ -96,6 +96,7 @@ function fixture(
     get: vi.fn<ArtifactStorage['get']>().mockResolvedValue(null),
     delete: vi.fn<ArtifactStorage['delete']>().mockResolvedValue(undefined),
   }
+  const telemetry = { recordTask: vi.fn(), setActiveTasks: vi.fn() }
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const worker = new ManagedTaskWorker({
     repository: repository as never,
@@ -112,8 +113,9 @@ function fixture(
     claimToken: () => claimed.claimToken!,
     ...(executionDeadline === undefined ? {} : { executionDeadline }),
     logger,
+    telemetry,
   })
-  return { worker, repository, execute, storage, logger }
+  return { worker, repository, execute, storage, logger, telemetry }
 }
 
 describe('ManagedTaskWorker', () => {
@@ -230,6 +232,32 @@ describe('ManagedTaskWorker', () => {
     )
     expect(upload?.[1]).toBeInstanceOf(AbortSignal)
     expect(repository.insertArtifactAndComplete).toHaveBeenCalledTimes(1)
+  })
+
+  it('records a normalized artifact-storage failure without payload metadata', async () => {
+    const screenshotTask = ManagedTaskRecordSchema.parse({
+      ...task,
+      request: { type: 'screenshot', format: 'png' },
+    })
+    const { worker, storage, telemetry } = fixture(screenshotTask, () =>
+      Promise.resolve({
+        type: 'screenshot',
+        mediaType: 'image/png',
+        bytes: new Uint8Array([1, 2, 3]),
+      }),
+    )
+    storage.put.mockRejectedValueOnce(new Error('Bearer object-storage-secret'))
+
+    await worker.runOnce()
+
+    expect(telemetry.recordTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'artifact_upload',
+        outcome: 'failure',
+        reasonCode: 'ARTIFACT_STORAGE_FAILED',
+      }),
+    )
+    expect(JSON.stringify(telemetry.recordTask.mock.calls)).not.toContain('object-storage-secret')
   })
 
   it('cleans an attempt-unique artifact after losing claim ownership', async () => {

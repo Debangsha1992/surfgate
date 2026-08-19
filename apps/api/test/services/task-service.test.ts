@@ -55,6 +55,11 @@ function fixture(
       multiTab: 'supported',
       longSession: 'supported',
     }) as const,
+  telemetry?: Readonly<{
+    recordTask: ReturnType<typeof vi.fn>
+    setActiveTasks: ReturnType<typeof vi.fn>
+    captureTraceContext?: () => Readonly<{ traceparent: string }>
+  }>,
 ) {
   const sessions = {
     findSessionForTenant: vi.fn().mockResolvedValue({
@@ -87,6 +92,7 @@ function fixture(
     config: TASK_CONFIG,
     ids: { task: () => taskID },
     now: () => new Date('2026-08-10T00:00:00.000Z'),
+    ...(telemetry === undefined ? {} : { telemetry }),
   })
   return { service, tasks, sessions, audit }
 }
@@ -98,6 +104,20 @@ describe('TaskService', () => {
 
     expect(response.task).toMatchObject({ id: taskID, status: 'queued', type: 'extract' })
     expect(tasks.createIdempotent).toHaveBeenCalledTimes(1)
+  })
+
+  it('captures only a bounded W3C trace reference for asynchronous worker correlation', async () => {
+    const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+    const telemetry = {
+      recordTask: vi.fn(),
+      setActiveTasks: vi.fn(),
+      captureTraceContext: () => ({ traceparent }),
+    }
+    const { service, tasks } = fixture(undefined, telemetry)
+
+    await service.create(context, sessionID, { type: 'extract' }, 'trace-key')
+
+    expect(tasks.createIdempotent.mock.calls[0]?.[0].task.traceParent).toBe(traceparent)
   })
 
   it('replays the durable task before mutable session-state checks', async () => {

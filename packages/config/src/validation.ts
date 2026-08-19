@@ -142,6 +142,31 @@ function optionalURL(
   return value === undefined ? undefined : parsedURL(value, key, protocols, fallback, issues)
 }
 
+function telemetryEndpoint(
+  environment: EnvironmentSource,
+  secureTransportRequired: boolean,
+  issues: ConfigurationIssue[],
+): URL | undefined {
+  const key = 'OTEL_EXPORTER_OTLP_ENDPOINT'
+  const endpoint = optionalURL(
+    environment,
+    key,
+    secureTransportRequired ? ['https:'] : ['http:', 'https:'],
+    new URL('https://invalid.invalid'),
+    issues,
+  )
+  if (
+    endpoint !== undefined &&
+    (endpoint.username.length > 0 ||
+      endpoint.password.length > 0 ||
+      endpoint.search.length > 0 ||
+      endpoint.hash.length > 0)
+  ) {
+    issues.push({ key, message: 'must not contain credentials, query parameters, or a fragment' })
+  }
+  return endpoint
+}
+
 function relayPublicURL(
   environment: EnvironmentSource,
   secureTransportRequired: boolean,
@@ -472,14 +497,68 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
   })
   const telemetry = Object.freeze({
     serviceName: optionalString(environment, 'OTEL_SERVICE_NAME') ?? 'surfgate',
-    endpoint: optionalURL(
+    endpoint: telemetryEndpoint(environment, secureTransportRequired, issues),
+    exportIntervalMs: boundedInteger(
       environment,
-      'OTEL_EXPORTER_OTLP_ENDPOINT',
-      secureTransportRequired ? ['https:'] : ['http:', 'https:'],
-      new URL('https://invalid.invalid'),
+      'SURFGATE_OTEL_EXPORT_INTERVAL_MS',
+      10_000,
+      100,
+      300_000,
+      issues,
+    ),
+    exportTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_OTEL_EXPORT_TIMEOUT_MS',
+      5_000,
+      100,
+      60_000,
+      issues,
+    ),
+    shutdownTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_OTEL_SHUTDOWN_TIMEOUT_MS',
+      5_000,
+      100,
+      60_000,
+      issues,
+    ),
+    maxQueueSize: boundedInteger(
+      environment,
+      'SURFGATE_OTEL_MAX_QUEUE_SIZE',
+      2_048,
+      64,
+      65_536,
+      issues,
+    ),
+    maxExportBatchSize: boundedInteger(
+      environment,
+      'SURFGATE_OTEL_MAX_EXPORT_BATCH_SIZE',
+      512,
+      16,
+      512,
+      issues,
+    ),
+    metricCardinalityLimit: boundedInteger(
+      environment,
+      'SURFGATE_OTEL_METRIC_CARDINALITY_LIMIT',
+      128,
+      16,
+      4_096,
       issues,
     ),
   })
+  if (telemetry.maxExportBatchSize > telemetry.maxQueueSize) {
+    issues.push({
+      key: 'SURFGATE_OTEL_MAX_EXPORT_BATCH_SIZE',
+      message: 'must be less than or equal to the telemetry queue size',
+    })
+  }
+  if (telemetry.exportIntervalMs < telemetry.exportTimeoutMs) {
+    issues.push({
+      key: 'SURFGATE_OTEL_EXPORT_INTERVAL_MS',
+      message: 'must be greater than or equal to the telemetry export timeout',
+    })
+  }
   const cloudflare = Object.freeze({
     apiBaseURL: cloudflareAPIBaseURL(environment, issues),
     credentials: cloudflareCredentials(environment, issues),
@@ -637,6 +716,26 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
       message: 'must exceed the task execution timeout by at least 15000 milliseconds',
     })
   }
+  const worker = Object.freeze({
+    healthHost: optionalString(environment, 'SURFGATE_WORKER_HEALTH_HOST') ?? '127.0.0.1',
+    healthPort: port(environment, 'SURFGATE_WORKER_HEALTH_PORT', 8082, issues),
+    readinessTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_WORKER_READINESS_TIMEOUT_MS',
+      5_000,
+      100,
+      60_000,
+      issues,
+    ),
+    drainTimeoutMs: boundedInteger(
+      environment,
+      'SURFGATE_WORKER_DRAIN_TIMEOUT_MS',
+      10_000,
+      100,
+      120_000,
+      issues,
+    ),
+  })
 
   if (issues.length > 0) {
     throw new ConfigurationError(issues)
@@ -650,6 +749,7 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
     redis,
     objectStorage,
     tasks,
+    worker,
     telemetry,
     cloudflare,
     security,

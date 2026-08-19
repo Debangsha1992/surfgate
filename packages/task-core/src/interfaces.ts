@@ -116,6 +116,7 @@ export const ArtifactRecordSchema = PublicArtifactSchema.unwrap()
 export type ArtifactRecord = z.infer<typeof ArtifactRecordSchema>
 
 export interface ArtifactStorage {
+  health?(): Promise<'ready' | 'unavailable'>
   put(
     input: Readonly<{
       key: string

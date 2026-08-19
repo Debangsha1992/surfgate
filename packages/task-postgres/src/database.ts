@@ -10,6 +10,7 @@ export interface TaskQueryable {
 
 export interface TaskDatabase extends TaskQueryable {
   transaction<Result>(operation: (transaction: TaskQueryable) => Promise<Result>): Promise<Result>
+  health(): Promise<'ready' | 'unavailable'>
   close(): Promise<void>
 }
 
@@ -47,6 +48,14 @@ export function createTaskDatabase(config: Pick<DatabaseConfig, 'url'>): TaskDat
         throw error
       } finally {
         client.release()
+      }
+    },
+    async health(): Promise<'ready' | 'unavailable'> {
+      try {
+        await queryable.query('select 1')
+        return 'ready'
+      } catch {
+        return 'unavailable'
       }
     },
     async close(): Promise<void> {

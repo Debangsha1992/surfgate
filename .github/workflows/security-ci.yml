@@ -76,5 +76,8 @@ jobs:
       - name: Run managed-task regression
         run: pnpm test:tasks
 
+      - name: Run observability regression
+        run: pnpm test:observability
+
       - name: Run database and Redis integration regressions
         run: pnpm test:integration

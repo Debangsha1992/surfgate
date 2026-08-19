@@ -33,6 +33,7 @@ interface TaskRow extends QueryResultRow {
   id: unknown
   tenant_id: unknown
   session_id: unknown
+  trace_parent: unknown
   request_json: unknown
   status: unknown
   attempt_count: unknown
@@ -61,7 +62,7 @@ interface ArtifactRow extends QueryResultRow {
   created_at: unknown
   expires_at: unknown
 }
-const TASK_COLUMNS = `id, tenant_id, session_id, request_json, status, attempt_count, max_attempts,
+const TASK_COLUMNS = `id, tenant_id, session_id, trace_parent, request_json, status, attempt_count, max_attempts,
  result_json, failure_code, created_at, updated_at, started_at, completed_at, failed_at,
  next_attempt_at, claim_token, lease_expires_at, version`
 
@@ -113,6 +114,7 @@ function taskFromRow(row: TaskRow): ManagedTaskRecord {
     id: row.id,
     tenantID: row.tenant_id,
     sessionID: row.session_id,
+    traceParent: row.trace_parent,
     request: row.request_json,
     status: row.status,
     attemptCount: integer(row.attempt_count),
@@ -323,15 +325,16 @@ export class PostgresManagedTaskRepository implements ManagedTaskRepository {
     const task = ManagedTaskRecordSchema.parse(raw)
     const rows = await db.query<TaskRow>(
       `insert into managed_tasks
-       (id,tenant_id,session_id,task_type,status,request_json,result_json,attempt_count,max_attempts,
+       (id,tenant_id,session_id,trace_parent,task_type,status,request_json,result_json,attempt_count,max_attempts,
         failure_code,created_at,updated_at,started_at,completed_at,failed_at,next_attempt_at,
         claim_token,lease_expires_at,version)
-       values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        returning ${TASK_COLUMNS}`,
       [
         task.id,
         task.tenantID,
         task.sessionID,
+        task.traceParent,
         task.request.type,
         task.status,
         JSON.stringify(task.request),

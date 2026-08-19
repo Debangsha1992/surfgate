@@ -9,7 +9,12 @@ import type { Duplex } from 'node:stream'
 
 import type { RelayConfig } from '@surfgate/config'
 import { SessionIDSchema } from '@surfgate/contracts'
-import { NOOP_RELAY_TELEMETRY, type RelayTelemetry } from '@surfgate/observability'
+import {
+  NOOP_RELAY_TELEMETRY,
+  settleOperation,
+  traceIDFromCarrier,
+  type RelayTelemetry,
+} from '@surfgate/observability'
 import type { RelayTokenService } from '@surfgate/security'
 import WebSocket, { WebSocketServer, type RawData } from 'ws'
 
@@ -160,6 +165,25 @@ function safeTelemetry(operation: () => void): void {
   }
 }
 
+async function boundedDependencyHealth(
+  operation: () => Promise<'ready' | 'unavailable'>,
+  timeoutMs: number,
+): Promise<Readonly<{ status: 'ready' | 'unavailable'; durationMs: number }>> {
+  const startedAt = performance.now()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const status = await Promise.race([
+      operation().catch(() => 'unavailable' as const),
+      new Promise<'unavailable'>((resolve) => {
+        timer = setTimeout(() => resolve('unavailable'), timeoutMs)
+      }),
+    ])
+    return { status, durationMs: Math.max(0, performance.now() - startedAt) }
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 export function createRelayServer(
   config: RelayConfig,
   dependencies: Readonly<{
@@ -195,15 +219,33 @@ export function createRelayServer(
       return
     }
     if (request.url === '/health/ready') {
-      const ready =
-        !draining &&
-        (await dependencies.coordinator.health()) === 'ready' &&
-        (!('health' in dependencies.sessions) ||
-          (await (
-            dependencies.sessions as RelaySessionRepository & {
-              health(): Promise<'ready' | 'unavailable'>
-            }
-          ).health()) === 'ready')
+      const [redis, postgres] = await Promise.all([
+        boundedDependencyHealth(() => dependencies.coordinator.health(), config.connectTimeoutMs),
+        'health' in dependencies.sessions
+          ? boundedDependencyHealth(
+              () =>
+                (
+                  dependencies.sessions as RelaySessionRepository & {
+                    health(): Promise<'ready' | 'unavailable'>
+                  }
+                ).health(),
+              config.connectTimeoutMs,
+            )
+          : Promise.resolve({ status: 'ready' as const, durationMs: 0 }),
+      ])
+      safeTelemetry(() => {
+        telemetry.recordDependencyHealth?.({
+          dependency: 'redis',
+          status: redis.status,
+          durationMs: redis.durationMs,
+        })
+        telemetry.recordDependencyHealth?.({
+          dependency: 'postgresql',
+          status: postgres.status,
+          durationMs: postgres.durationMs,
+        })
+      })
+      const ready = !draining && redis.status === 'ready' && postgres.status === 'ready'
       response.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' })
       response.end(ready ? '{"status":"ready"}' : '{"status":"unavailable"}')
       return
@@ -246,6 +288,12 @@ export function createRelayServer(
       return
     }
     const startedAt = performance.now()
+    const rawTraceParent = request.headers.traceparent
+    const authenticationSpan = telemetry.startSpan?.(
+      'surfgate.relay.authenticate',
+      { operation: 'websocket_upgrade' },
+      typeof rawTraceParent === 'string' ? { traceparent: rawTraceParent } : undefined,
+    )
     let authorized: AuthorizedRelaySession
     try {
       authorized = await authorizeRelaySession(
@@ -268,9 +316,13 @@ export function createRelayServer(
           reasonCode: normalized.code,
         }),
       )
+      authenticationSpan?.end('failure', { reasonCode: normalized.code })
       rejectUpgrade(socket, statusFor(normalized))
       return
     }
+    authenticationSpan?.end('success')
+    const relayTraceContext = authenticationSpan?.context()
+    const traceID = traceIDFromCarrier(relayTraceContext)
     const ownerID = randomBytes(16).toString('base64url')
     let acquired = false
     let upstreamConnectStartedAt: number | undefined
@@ -294,12 +346,23 @@ export function createRelayServer(
       const resolved = dependencies.upstream.resolve(authorized)
       const upstreamStartedAt = performance.now()
       upstreamConnectStartedAt = upstreamStartedAt
-      upstream = await connectUpstream(
-        resolved.endpoint,
-        resolved.headers,
-        config.connectTimeoutMs,
-        config.maxQueuedBytes,
+      const upstreamSpan = telemetry.startSpan?.(
+        'surfgate.relay.upstream_connect',
+        {},
+        relayTraceContext,
       )
+      try {
+        upstream = await connectUpstream(
+          resolved.endpoint,
+          resolved.headers,
+          config.connectTimeoutMs,
+          config.maxQueuedBytes,
+        )
+        upstreamSpan?.end('success')
+      } catch (error: unknown) {
+        upstreamSpan?.end('failure', { reasonCode: 'UPSTREAM_CONNECT_FAILED' })
+        throw error
+      }
       safeTelemetry(() =>
         telemetry.recordConnection({
           event: 'upstream_connect',
@@ -411,6 +474,7 @@ export function createRelayServer(
             code,
             clientState: client.readyState,
             upstreamState: connectedUpstream.readyState,
+            traceID,
           },
           'Relay stream failed',
         )
@@ -559,7 +623,7 @@ export function createRelayServer(
           durationMs: Math.max(0, performance.now() - startedAt),
         })
       })
-      logger.info({ event: 'relay.connected' }, 'Relay connection established')
+      logger.info({ event: 'relay.connected', traceID }, 'Relay connection established')
       wss.emit('connection', client, request)
     })
   }
@@ -594,6 +658,10 @@ export function createRelayServer(
     close(): Promise<void> {
       closePromise ??= (async () => {
         draining = true
+        logger.info(
+          { event: 'relay.shutdown.initiated', activeConnections: active.size },
+          'SurfGate relay is draining',
+        )
         const httpClosed = started
           ? new Promise<void>((resolve) => http.close(() => resolve()))
           : Promise.resolve()
@@ -602,17 +670,38 @@ export function createRelayServer(
         while (active.size > 0 && Date.now() < deadline) {
           await new Promise<void>((resolve) => setTimeout(resolve, 10))
         }
+        if (active.size > 0) {
+          logger.warn(
+            { event: 'relay.shutdown.drain_timeout', activeConnections: active.size },
+            'Relay drain deadline reached',
+          )
+        }
         for (const connection of active.values()) connection.terminate()
         const terminationDeadline = Date.now() + Math.min(1_000, config.drainTimeoutMs)
         while (active.size > 0 && Date.now() < terminationDeadline) {
           await new Promise<void>((resolve) => setTimeout(resolve, 10))
         }
         active.clear()
-        await httpClosed
-        await unsubscribe?.().catch(() => undefined)
-        await dependencies.coordinator.close()
+        const httpResult = await settleOperation(httpClosed, config.drainTimeoutMs)
+        if (httpResult.kind !== 'completed') http.closeAllConnections()
+        const dependencyResults = await Promise.all([
+          settleOperation(unsubscribe?.() ?? Promise.resolve(), config.drainTimeoutMs),
+          settleOperation(dependencies.coordinator.close(), config.drainTimeoutMs),
+        ])
+        const dependencyClosureFailed =
+          httpResult.kind !== 'completed' ||
+          dependencyResults.some((result) => result.kind !== 'completed')
+        if (dependencyClosureFailed) {
+          logger.warn(
+            { event: 'relay.shutdown.dependency_timeout' },
+            'Relay transport or dependency shutdown exceeded its deadline',
+          )
+        }
         wss.close()
         logger.info({ event: 'relay.shutdown' }, 'SurfGate relay stopped')
+        if (dependencyClosureFailed) {
+          throw new Error('Relay resource shutdown did not complete within its deadline.')
+        }
       })()
       return closePromise
     },

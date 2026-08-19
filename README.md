@@ -85,7 +85,7 @@ packages/
   provider-kitesurf/      Kitesurf adapter
   provider-chromium/      Chromium adapter
   security/               Target policy, relay tokens, and protected references
-  observability/          Structured control-plane and relay telemetry interfaces
+  observability/          Shared OpenTelemetry runtime, metrics, traces, and safe logging
   task-core/              Provider-neutral task lifecycle and execution ports
   task-postgres/          Durable task claiming, leases, and artifact metadata
   object-storage/         Private S3/R2-compatible artifact adapter
@@ -151,6 +151,7 @@ pnpm test:security
 pnpm --filter @surfgate/router test:golden
 pnpm test:relay-load
 pnpm test:tasks
+pnpm test:observability
 ```
 
 Integration tests require Redis and an isolated PostgreSQL database whose name ends in `_test`. Create the local test database once and run the suite with:
@@ -186,6 +187,8 @@ Only an active, unexpired session can obtain a relay credential. The credential 
 
 The relay exposes separate `/health/live` and `/health/ready` endpoints. During shutdown it stops upgrades, closes active client/upstream pairs within the configured drain bound, releases Redis ownership, and exits. New connections fail closed when PostgreSQL or Redis authorization state is unavailable.
 
+The worker exposes the same liveness/readiness split on its configured health port (default `8082`). Readiness requires PostgreSQL and object storage. API, relay, and worker share one bounded OpenTelemetry runtime; OTLP/HTTP export is enabled only when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured, and exporter failure does not change serving health.
+
 ### Relay operations
 
 - Drain a relay instance through its normal `SIGTERM`/`SIGINT` shutdown path; the configured drain timeout bounds graceful client/upstream closure before hard cleanup.
@@ -193,6 +196,7 @@ The relay exposes separate `/health/live` and `/health/ready` endpoints. During 
 - Investigate `UPSTREAM_CONNECT_FAILED` using provider health and server-side Cloudflare configuration. SurfGate deliberately omits upstream response bodies, authorization headers, and provider URLs from client errors and logs.
 - Rotate `SURFGATE_RELAY_TOKEN_SIGNING_KEY` together with `SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID` as a coordinated deployment. Existing short-lived credentials become invalid when the old key is removed, so schedule rotation around the configured token TTL (maximum five minutes).
 - Keep provider-session encryption-key rotation separate from relay-token signing-key rotation; neither key may be reused for the other purpose.
+- Use [operations/observability.md](operations/observability.md) for telemetry taxonomy, health semantics, proposed internal SLOs, alerts, and dashboard requirements. Incident procedures are in [operations/runbooks.md](operations/runbooks.md).
 
 The integration suite includes a browser-download-free Playwright Core `connectOverCDP` compatibility test. It verifies that a standard CDP client can authenticate to SurfGate through an upgrade header without learning the provider authorization credential.
 

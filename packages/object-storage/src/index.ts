@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadBucketCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
@@ -11,7 +12,7 @@ const STORAGE_KEY_PATTERN =
   /^v1\/ten_[0-7][0-9A-HJKMNP-TV-Z]{25}\/tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}\/art_[0-7][0-9A-HJKMNP-TV-Z]{25}\/a[1-9][0-9]?-[0-9a-f]{16}$/u
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u
 
-type S3Command = PutObjectCommand | GetObjectCommand | DeleteObjectCommand
+type S3Command = PutObjectCommand | GetObjectCommand | DeleteObjectCommand | HeadBucketCommand
 export interface S3CommandSender {
   send(command: S3Command, options?: Readonly<{ abortSignal: AbortSignal }>): Promise<unknown>
 }
@@ -42,6 +43,7 @@ function defaultSender(config: ObjectStorageConfig): S3CommandSender {
     send(command: S3Command, options?: Readonly<{ abortSignal: AbortSignal }>): Promise<unknown> {
       if (command instanceof PutObjectCommand) return client.send(command, options)
       if (command instanceof GetObjectCommand) return client.send(command, options)
+      if (command instanceof HeadBucketCommand) return client.send(command, options)
       return client.send(command, options)
     },
   })
@@ -85,6 +87,16 @@ export function createS3ArtifactStorage(
   sender: S3CommandSender = defaultSender(config),
 ): ArtifactStorage {
   const storage: ArtifactStorage = {
+    async health(): Promise<'ready' | 'unavailable'> {
+      try {
+        await sender.send(new HeadBucketCommand({ Bucket: config.bucket }), {
+          abortSignal: AbortSignal.timeout(5_000),
+        })
+        return 'ready'
+      } catch {
+        return 'unavailable'
+      }
+    },
     async put(input, signal): Promise<void> {
       assertNotAborted(signal)
       const key = validatedKey(input.key)

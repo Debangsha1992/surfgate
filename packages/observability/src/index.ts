@@ -1,3 +1,17 @@
+export type TraceContextCarrier = Readonly<{ traceparent: string }>
+
+export type TelemetrySpan = Readonly<{
+  run<Result>(operation: () => Result): Result
+  context(): TraceContextCarrier | undefined
+  end(outcome: 'success' | 'failure', attributes?: Readonly<Record<string, unknown>>): void
+}>
+
+export type StartTelemetrySpan = (
+  name: string,
+  attributes?: Readonly<Record<string, unknown>>,
+  parent?: TraceContextCarrier,
+) => TelemetrySpan
+
 export type HTTPObservation = Readonly<{
   method: string
   route: string
@@ -17,10 +31,26 @@ export type SessionTransitionObservation = Readonly<{
   outcome: 'success' | 'conflict'
 }>
 
+export type DependencyHealthObservation = Readonly<{
+  dependency: 'postgresql' | 'redis' | 'object_storage'
+  status: 'ready' | 'unavailable'
+  durationMs: number
+}>
+
+export type RoutingDecisionObservation = Readonly<{
+  outcome: 'selected' | 'no_compatible_runtime'
+  policyVersion: string
+  runtimeClass?: string
+  providerID?: string
+  rejectedReasonCodes: readonly string[]
+}>
+
 export type ControlPlaneOperationObservation = Readonly<{
   operation:
     | 'surfgate.quota.check'
+    | 'surfgate.idempotency.resolve'
     | 'surfgate.routing.decide'
+    | 'surfgate.routing.fallback'
     | 'surfgate.provider.health'
     | 'surfgate.provider.allocate'
     | 'surfgate.provider.terminate'
@@ -29,20 +59,25 @@ export type ControlPlaneOperationObservation = Readonly<{
   durationMs: number
   runtimeClass?: string
   providerID?: string
+  policyVersion?: string
+  healthState?: 'healthy' | 'degraded' | 'unavailable'
   reasonCode?: string
 }>
 
 /**
- * OpenTelemetry-compatible control-plane hook boundary. The OTel SDK/exporter
- * bootstrap remains deployment-owned; domain and HTTP code emit bounded labels
- * through this interface rather than importing a global telemetry singleton.
+ * Shared control-plane telemetry boundary. Service bootstraps create the OTel
+ * runtime once; domain and HTTP code emit bounded labels through this interface
+ * rather than importing a global telemetry singleton.
  */
 export interface ControlPlaneTelemetry {
   recordHTTP(input: HTTPObservation): void
   recordAuthentication(input: AuthenticationObservation): void
   recordDatabaseHealth(status: 'ready' | 'unavailable'): void
+  recordDependencyHealth?(input: DependencyHealthObservation): void
   recordSessionTransition(input: SessionTransitionObservation): void
+  recordRoutingDecision?(input: RoutingDecisionObservation): void
   recordOperation?(input: ControlPlaneOperationObservation): void
+  startSpan?: StartTelemetrySpan
 }
 
 export const NOOP_CONTROL_PLANE_TELEMETRY: ControlPlaneTelemetry = Object.freeze({
@@ -72,6 +107,8 @@ export interface RelayTelemetry {
   recordConnection(input: RelayConnectionObservation): void
   recordTraffic(input: RelayTrafficObservation): void
   setActiveConnections(value: number): void
+  startSpan?: StartTelemetrySpan
+  recordDependencyHealth?(input: DependencyHealthObservation): void
 }
 
 export const NOOP_RELAY_TELEMETRY: RelayTelemetry = Object.freeze({
@@ -85,6 +122,7 @@ export type ManagedTaskObservation = Readonly<{
   taskType?: 'extract' | 'screenshot' | 'pdf'
   outcome: 'success' | 'failure'
   durationMs: number
+  queueLatencyMs?: number
   attemptCount?: number
   reasonCode?: string
   bytes?: number
@@ -93,9 +131,16 @@ export type ManagedTaskObservation = Readonly<{
 export interface ManagedTaskTelemetry {
   recordTask(input: ManagedTaskObservation): void
   setActiveTasks(value: number): void
+  startSpan?: StartTelemetrySpan
+  captureTraceContext?(): TraceContextCarrier | undefined
+  recordDependencyHealth?(input: DependencyHealthObservation): void
 }
 
 export const NOOP_MANAGED_TASK_TELEMETRY: ManagedTaskTelemetry = Object.freeze({
   recordTask(): void {},
   setActiveTasks(): void {},
 })
+
+export * from './telemetry.js'
+export * from './runtime.js'
+export * from './structured-logger.js'

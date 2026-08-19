@@ -57,7 +57,16 @@ describe('parseConfig', () => {
       endpoint: undefined,
       region: 'auto',
     })
-    expect(config.telemetry).toEqual({ endpoint: undefined, serviceName: 'surfgate' })
+    expect(config.telemetry).toEqual({
+      endpoint: undefined,
+      serviceName: 'surfgate',
+      exportIntervalMs: 10_000,
+      exportTimeoutMs: 5_000,
+      shutdownTimeoutMs: 5_000,
+      maxQueueSize: 2_048,
+      maxExportBatchSize: 512,
+      metricCardinalityLimit: 128,
+    })
     expect(config.cloudflare).toEqual({
       apiBaseURL: new URL('https://api.cloudflare.com/client/v4'),
       credentials: undefined,
@@ -85,6 +94,12 @@ describe('parseConfig', () => {
       pollIntervalMs: 250,
       requestsPerMinute: 120,
       screenshotMaxPixels: 33_554_432,
+    })
+    expect(config.worker).toEqual({
+      healthHost: '127.0.0.1',
+      healthPort: 8082,
+      readinessTimeoutMs: 5_000,
+      drainTimeoutMs: 10_000,
     })
   })
 
@@ -144,6 +159,29 @@ describe('parseConfig', () => {
   })
 
   it.each([
+    ['SURFGATE_OTEL_EXPORT_INTERVAL_MS', '99'],
+    ['SURFGATE_OTEL_EXPORT_TIMEOUT_MS', '0'],
+    ['SURFGATE_OTEL_SHUTDOWN_TIMEOUT_MS', '70000'],
+    ['SURFGATE_OTEL_MAX_QUEUE_SIZE', '63'],
+    ['SURFGATE_OTEL_MAX_EXPORT_BATCH_SIZE', '513'],
+    ['SURFGATE_OTEL_METRIC_CARDINALITY_LIMIT', '4097'],
+  ] as const)('rejects invalid telemetry setting %s', (key, value) => {
+    expect(() => parseConfig({ ...VALID_DEVELOPMENT_ENVIRONMENT, [key]: value })).toThrowError(
+      new RegExp(key),
+    )
+  })
+
+  it('rejects a telemetry export interval shorter than its exporter timeout', () => {
+    expect(() =>
+      parseConfig({
+        ...VALID_DEVELOPMENT_ENVIRONMENT,
+        SURFGATE_OTEL_EXPORT_INTERVAL_MS: '100',
+        SURFGATE_OTEL_EXPORT_TIMEOUT_MS: '5000',
+      }),
+    ).toThrowError(/SURFGATE_OTEL_EXPORT_INTERVAL_MS/u)
+  })
+
+  it.each([
     ['SURFGATE_TASK_MAX_ATTEMPTS', '0'],
     ['SURFGATE_TASK_EXECUTION_TIMEOUT_MS', '0'],
     ['SURFGATE_TASK_LEASE_TTL_MS', '44000'],
@@ -164,6 +202,8 @@ describe('parseConfig', () => {
     ['SURFGATE_RELAY_PUBLIC_URL', 'wss://relay.example.test/?token=secret'],
     ['S3_ENDPOINT', 'not a URL'],
     ['OTEL_EXPORTER_OTLP_ENDPOINT', 'file:///tmp/telemetry'],
+    ['OTEL_EXPORTER_OTLP_ENDPOINT', 'https://user:secret@telemetry.example.test'],
+    ['OTEL_EXPORTER_OTLP_ENDPOINT', 'https://telemetry.example.test?token=secret'],
     ['CLOUDFLARE_API_BASE_URL', 'http://api.cloudflare.test'],
     ['CLOUDFLARE_API_BASE_URL', 'https://attacker.example/client/v4'],
     ['CLOUDFLARE_API_BASE_URL', 'https://api.cloudflare.com:444/client/v4'],

@@ -46,6 +46,7 @@ describeWithDatabase('tenant-scoped managed task persistence', () => {
       id: TASK_ID,
       tenantID: TENANT_ID,
       sessionID: SESSION_ID,
+      traceParent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
       request: { type: 'extract' },
       status: 'queued',
       attemptCount: 0,
@@ -90,6 +91,7 @@ describeWithDatabase('tenant-scoped managed task persistence', () => {
       leaseTTLms: 60_000,
       maxRunningPerTenant: 5,
     })
+    expect(claimed?.traceParent).toBe(task.traceParent)
     const completed = await repository.transition({
       tenantID: TENANT_ID,
       taskID: TASK_ID,

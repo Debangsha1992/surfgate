@@ -24,7 +24,7 @@ const tokens = createRelayTokenService(signing)
 const running: RelayServer[] = []
 
 afterEach(async () => {
-  await Promise.all(running.splice(0).map((server) => server.close()))
+  await Promise.all(running.splice(0).map((server) => server.close().catch(() => undefined)))
 })
 
 function coordinator() {
@@ -101,6 +101,7 @@ async function startRelay(
   upstreamURL: string,
   overrides: Readonly<Partial<RelayConfig>> = {},
   sessionExpiresAt?: string,
+  coordinatorOverride?: RelayCoordinator,
 ) {
   const coordination = coordinator()
   const telemetry = {
@@ -130,7 +131,7 @@ async function startRelay(
       sessions: {
         findSessionForTenant: () => Promise.resolve(session(sessionExpiresAt)),
       },
-      coordinator: coordination.value,
+      coordinator: coordinatorOverride ?? coordination.value,
       upstream: {
         resolve: () => ({
           endpoint: upstreamURL,
@@ -157,6 +158,31 @@ function connect(port: number, token = credential()): WebSocket {
 }
 
 describe('relay server integration', () => {
+  it('bounds shutdown when a distributed coordinator does not close', async () => {
+    const upstream = await upstreamEchoServer()
+    const base = coordinator()
+    const hangingCoordinator: RelayCoordinator = {
+      ...base.value,
+      close: () => new Promise<void>(() => undefined),
+    }
+    try {
+      const { relay, logger } = await startRelay(
+        upstream.url,
+        { drainTimeoutMs: 10 },
+        undefined,
+        hangingCoordinator,
+      )
+
+      await expect(relay.close()).rejects.toThrow('Relay resource shutdown did not complete')
+      expect(logger.warn).toHaveBeenCalledWith(
+        { event: 'relay.shutdown.dependency_timeout' },
+        expect.any(String),
+      )
+    } finally {
+      await upstream.close()
+    }
+  })
+
   it('proxies ordered text and binary frames bidirectionally without provider credentials', async () => {
     const upstream = await upstreamEchoServer()
     try {

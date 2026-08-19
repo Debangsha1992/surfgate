@@ -1,7 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto'
 
 import type { ManagedTaskConfig } from '@surfgate/config'
-import { NOOP_MANAGED_TASK_TELEMETRY, type ManagedTaskTelemetry } from '@surfgate/observability'
+import {
+  NOOP_MANAGED_TASK_TELEMETRY,
+  traceIDFromCarrier,
+  type ManagedTaskTelemetry,
+} from '@surfgate/observability'
 import {
   ArtifactIDSchema,
   MAX_EXTRACT_TEXT_CHARACTERS,
@@ -87,16 +91,28 @@ export class ManagedTaskWorker {
     const executionDeadline = this.#executionDeadline(this.dependencies.config.executionTimeoutMs)
     const executionSignal = AbortSignal.any([signal, executionDeadline])
     const startedAt = performance.now()
+    const telemetry = this.dependencies.telemetry ?? NOOP_MANAGED_TASK_TELEMETRY
+    const taskSpan = telemetry.startSpan?.(
+      'surfgate.task.execute',
+      { taskType: task.request.type, attemptCount: task.attemptCount },
+      task.traceParent === null ? undefined : { traceparent: task.traceParent },
+    )
+    const traceID = traceIDFromCarrier(taskSpan?.context())
+    let taskOutcome: 'success' | 'failure' = 'failure'
     this.#setActiveTasks(1)
     this.#record({
       event: 'claim',
       taskType: task.request.type,
       outcome: 'success',
       durationMs: 0,
+      queueLatencyMs: Math.max(0, Date.now() - Date.parse(task.createdAt)),
       attemptCount: task.attemptCount,
     })
     try {
-      await this.#execute(task, claimToken, executionSignal, signal, executionDeadline)
+      const execution = () =>
+        this.#execute(task, claimToken, executionSignal, signal, executionDeadline)
+      await (taskSpan === undefined ? execution() : taskSpan.run(execution))
+      taskOutcome = 'success'
       this.#record({
         event: 'execute',
         taskType: task.request.type,
@@ -110,6 +126,7 @@ export class ManagedTaskWorker {
           taskType: task.request.type,
           outcome: 'success',
           attemptCount: task.attemptCount,
+          traceID,
         },
         'Managed task completed',
       )
@@ -127,7 +144,7 @@ export class ManagedTaskWorker {
           'Managed task claim ownership was lost',
         )
       } else if (!signal.aborted) {
-        await this.#handleFailure(task, claimToken, error)
+        await this.#handleFailure(task, claimToken, error, traceID)
       }
       const code = error instanceof ManagedTaskExecutionError ? error.code : 'TASK_EXECUTION_FAILED'
       this.#record({
@@ -139,6 +156,7 @@ export class ManagedTaskWorker {
         reasonCode: code,
       })
     } finally {
+      taskSpan?.end(taskOutcome, { taskType: task.request.type, attemptCount: task.attemptCount })
       this.#setActiveTasks(0)
     }
     return true
@@ -239,8 +257,8 @@ export class ManagedTaskWorker {
       storageKey: storageKey(task, id, claimToken),
       sha256,
     }
+    const uploadStartedAt = performance.now()
     try {
-      const uploadStartedAt = performance.now()
       await this.dependencies.storage.put(
         {
           key: artifact.storageKey,
@@ -259,6 +277,14 @@ export class ManagedTaskWorker {
         bytes: output.bytes.byteLength,
       })
     } catch {
+      this.#record({
+        event: 'artifact_upload',
+        taskType: task.request.type,
+        outcome: 'failure',
+        durationMs: Math.max(0, performance.now() - uploadStartedAt),
+        attemptCount: task.attemptCount,
+        reasonCode: 'ARTIFACT_STORAGE_FAILED',
+      })
       if (executionDeadline.aborted || sessionDeadline.aborted) {
         throw new ManagedTaskExecutionError('TASK_TIMEOUT', true)
       }
@@ -296,7 +322,12 @@ export class ManagedTaskWorker {
     }
   }
 
-  async #handleFailure(task: ManagedTaskRecord, claimToken: string, error: unknown): Promise<void> {
+  async #handleFailure(
+    task: ManagedTaskRecord,
+    claimToken: string,
+    error: unknown,
+    traceID: string | undefined,
+  ): Promise<void> {
     const normalized =
       error instanceof ManagedTaskExecutionError
         ? error
@@ -324,6 +355,7 @@ export class ManagedTaskWorker {
           taskType: task.request.type,
           outcome: 'ignored',
           attemptCount: task.attemptCount,
+          traceID,
         },
         'Managed task claim ownership was lost',
       )
@@ -336,9 +368,20 @@ export class ManagedTaskWorker {
         outcome: 'failure',
         reasonCode: normalized.code,
         attemptCount: task.attemptCount,
+        traceID,
       },
       retry ? 'Managed task retry scheduled' : 'Managed task failed',
     )
+    if (retry) {
+      this.#record({
+        event: 'retry',
+        taskType: task.request.type,
+        outcome: 'success',
+        durationMs: 0,
+        attemptCount: task.attemptCount,
+        reasonCode: normalized.code,
+      })
+    }
   }
 
   #record(input: Parameters<ManagedTaskTelemetry['recordTask']>[0]): void {

@@ -25,3 +25,4 @@ coverage/
 docs/
 *.md
 !/README.md
+!/operations/*.md

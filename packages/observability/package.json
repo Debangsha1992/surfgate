@@ -12,9 +12,26 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --config ../../vitest.config.ts --root .",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "0.221.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.221.0",
+    "@opentelemetry/resources": "2.10.0",
+    "@opentelemetry/sdk-metrics": "2.10.0",
+    "@opentelemetry/sdk-node": "0.221.0",
+    "@opentelemetry/sdk-trace-base": "2.10.0",
+    "@surfgate/config": "workspace:*",
+    "@surfgate/contracts": "workspace:*",
+    "@surfgate/provider-core": "workspace:*",
+    "@surfgate/router": "workspace:*",
+    "@surfgate/security": "workspace:*"
+  },
+  "devDependencies": {
+    "@opentelemetry/context-async-hooks": "2.10.0"
   }
 }

@@ -17,6 +17,11 @@ export const ManagedTaskRecordSchema = z
     id: TaskIDSchema,
     tenantID: TenantIDSchema,
     sessionID: SessionIDSchema,
+    traceParent: z
+      .string()
+      .regex(/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/u)
+      .nullable()
+      .default(null),
     request: ManagedTaskCreateRequestSchema,
     status: ManagedTaskStatusSchema,
     attemptCount: z.number().int().nonnegative().max(100),

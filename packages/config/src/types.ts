@@ -90,9 +90,22 @@ export type ManagedTaskConfig = Readonly<{
   artifactRetentionSeconds: number
 }>
 
+export type WorkerConfig = Readonly<{
+  healthHost: string
+  healthPort: number
+  readinessTimeoutMs: number
+  drainTimeoutMs: number
+}>
+
 export type TelemetryConfig = Readonly<{
   serviceName: string
   endpoint: URL | undefined
+  exportIntervalMs: number
+  exportTimeoutMs: number
+  shutdownTimeoutMs: number
+  maxQueueSize: number
+  maxExportBatchSize: number
+  metricCardinalityLimit: number
 }>
 
 export type CloudflareCredentials = Readonly<{
@@ -113,6 +126,7 @@ export type SurfGateConfig = Readonly<{
   redis: RedisConfig
   objectStorage: ObjectStorageConfig
   tasks: ManagedTaskConfig
+  worker: WorkerConfig
   telemetry: TelemetryConfig
   cloudflare: CloudflareConfig
   security: SecurityConfig

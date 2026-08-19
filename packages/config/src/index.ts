@@ -24,5 +24,6 @@ export type {
   SecurityConfig,
   SurfGateConfig,
   TelemetryConfig,
+  WorkerConfig,
 } from './types.js'
 export { parseConfig } from './validation.js'

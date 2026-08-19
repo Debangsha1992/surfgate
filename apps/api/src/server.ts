@@ -41,13 +41,13 @@ export interface APIServer {
 type ListenOptions = Readonly<{ host: string; port: number }>
 const SHUTDOWN_TIMEOUT_MS = 5_000
 
-async function settleWithin(operation: Promise<void>): Promise<void> {
+async function settleWithin(operation: Promise<void>): Promise<'completed' | 'timed_out'> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    await Promise.race([
-      operation.catch(() => undefined),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS)
+    return await Promise.race([
+      operation.then(() => 'completed' as const).catch(() => 'completed' as const),
+      new Promise<'timed_out'>((resolve) => {
+        timer = setTimeout(() => resolve('timed_out'), SHUTDOWN_TIMEOUT_MS)
       }),
     ])
   } finally {
@@ -131,6 +131,10 @@ export function createAPIServer(
     logger:
       options.logger ??
       ({
+        base: {
+          service: `${config.telemetry.serviceName}-api`,
+          environment: config.runtime.environment,
+        },
         level: config.runtime.logLevel,
         redact: { paths: [...FASTIFY_LOG_REDACTION_PATHS], censor: '[REDACTED]' },
       } as const),
@@ -161,9 +165,22 @@ export function createAPIServer(
           if (startPromise !== undefined) {
             await startPromise.catch(() => undefined)
           }
-          await app.close()
+          const appClose = await settleWithin(app.close())
+          if (appClose === 'timed_out') {
+            app.log.warn({ event: 'api.shutdown.drain_timeout' }, 'API drain deadline reached')
+          }
         } finally {
-          await Promise.all([settleWithin(database.close()), settleWithin(redis.close())])
+          const dependencies = await Promise.all([
+            settleWithin(database.close()),
+            settleWithin(redis.close()),
+          ])
+          if (dependencies.includes('timed_out')) {
+            app.log.warn(
+              { event: 'api.shutdown.dependency_timeout' },
+              'API dependency shutdown deadline reached',
+            )
+          }
+          app.log.info({ event: 'api.shutdown.complete' }, 'SurfGate API stopped')
         }
       })()
       return closePromise

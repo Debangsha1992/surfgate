@@ -5,6 +5,7 @@ import {
   type SurfGateErrorCode,
 } from '@surfgate/contracts'
 import { NOOP_CONTROL_PLANE_TELEMETRY, type ControlPlaneTelemetry } from '@surfgate/observability'
+import { traceIDFromCarrier } from '@surfgate/observability'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 
 import { AuthenticationError } from './auth/authentication.js'
@@ -100,18 +101,28 @@ export function buildAPIApplication(dependencies: APIApplicationDependencies): F
   const app = Fastify(fastifyOptions)
   app.decorateRequest('auth')
   app.decorateRequest('startedAtMonotonic', 0)
+  app.decorateRequest('telemetrySpan')
 
-  app.addHook('onRequest', async (request, reply) => {
+  app.addHook('onRequest', (request, reply, done) => {
     request.startedAtMonotonic = performance.now()
     reply.header('x-request-id', request.id)
     reply.header('cache-control', 'no-store')
     reply.header('x-content-type-options', 'nosniff')
     reply.header('referrer-policy', 'no-referrer')
+    const incomingTraceParent = request.headers.traceparent
+    request.telemetrySpan = telemetry.startSpan?.(
+      'surfgate.http.request',
+      { method: request.method },
+      typeof incomingTraceParent === 'string' ? { traceparent: incomingTraceParent } : undefined,
+    )
+    if (request.telemetrySpan === undefined) done()
+    else request.telemetrySpan.run(done)
   })
   app.addHook('onResponse', async (request, reply) => {
     const durationMs = Math.max(0, performance.now() - request.startedAtMonotonic)
     const route = request.routeOptions.url ?? 'unmatched'
     const outcome = reply.statusCode < 500 ? 'success' : 'failure'
+    request.telemetrySpan?.end(outcome, { route, statusCode: reply.statusCode })
     telemetry.recordHTTP({
       method: request.method,
       route,
@@ -123,6 +134,7 @@ export function buildAPIApplication(dependencies: APIApplicationDependencies): F
       {
         event: 'api.request.completed',
         requestID: request.id,
+        traceID: traceIDFromCarrier(request.telemetrySpan?.context()),
         route,
         statusCode: reply.statusCode,
         durationMs,
@@ -145,10 +157,16 @@ export function buildAPIApplication(dependencies: APIApplicationDependencies): F
     const validatedCode = SurfGateErrorCodeSchema.parse(classified.code)
     if (classified.statusCode >= 500) {
       request.log.error(
-        { event: 'api.request.failed', requestID: request.id, code: validatedCode },
+        {
+          event: 'api.request.failed',
+          requestID: request.id,
+          traceID: traceIDFromCarrier(request.telemetrySpan?.context()),
+          code: validatedCode,
+        },
         'API request failed',
       )
     }
+    request.telemetrySpan?.end('failure', { reasonCode: validatedCode })
     return reply.status(classified.statusCode).send(
       createSurfGateErrorResponse({
         code: validatedCode,

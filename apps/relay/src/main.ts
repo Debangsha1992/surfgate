@@ -1,33 +1,16 @@
 import { loadConfig } from '@surfgate/config'
+import { createStructuredLogger, createTelemetryRuntime } from '@surfgate/observability'
 import { resolveCloudflareBrowserRunConnection } from '@surfgate/provider-cloudflare'
 import {
   createProviderSessionReferenceProtector,
   createRelayTokenService,
-  redactSensitiveData,
 } from '@surfgate/security'
 
 import { createRelayDatabase } from './postgres-session-repository.js'
+import { completeRelayShutdown } from './lifecycle.js'
 import { createRelayCoordinator } from './redis-coordinator.js'
 import { createRelayServer, type RelayLogger } from './relay-server.js'
 import { createUpstreamConnectionResolver } from './upstream-resolver.js'
-
-const logger: RelayLogger = Object.freeze({
-  info(fields, message): void {
-    process.stdout.write(
-      `${JSON.stringify({ level: 'info', message, ...redactSensitiveData(fields) })}\n`,
-    )
-  },
-  warn(fields, message): void {
-    process.stdout.write(
-      `${JSON.stringify({ level: 'warn', message, ...redactSensitiveData(fields) })}\n`,
-    )
-  },
-  error(fields, message): void {
-    process.stderr.write(
-      `${JSON.stringify({ level: 'error', message, ...redactSensitiveData(fields) })}\n`,
-    )
-  },
-})
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -36,6 +19,11 @@ async function main(): Promise<void> {
   if (encryption === undefined || signing === undefined) {
     throw new Error('Relay security configuration is incomplete.')
   }
+  const observability = createTelemetryRuntime(config.telemetry, 'relay')
+  const logger: RelayLogger = createStructuredLogger({
+    service: observability.serviceName,
+    environment: config.runtime.environment,
+  })
   const database = createRelayDatabase(config.database)
   const coordinator = createRelayCoordinator(config.redis)
   const server = createRelayServer(config.relay, {
@@ -47,27 +35,50 @@ async function main(): Promise<void> {
       resolveProviderConnection: (session) =>
         resolveCloudflareBrowserRunConnection(config.cloudflare, session),
     }),
+    telemetry: observability.relay,
     logger,
   })
   let stopping: Promise<void> | undefined
   const stop = (): void => {
-    stopping ??= server
-      .close()
-      .finally(() => database.close())
-      .catch(() => undefined)
+    stopping ??= completeRelayShutdown({
+      drainTimeoutMs: config.relay.drainTimeoutMs,
+      closeServer: () => server.close(),
+      closeDatabase: () => database.close(),
+      shutdownTelemetry: () => observability.shutdown(),
+      forceExit: (code) => process.exit(code),
+      warn: () => {
+        logger.warn(
+          { event: 'relay.shutdown.dependency_timeout' },
+          'Relay shutdown exceeded a dependency deadline',
+        )
+      },
+    }).catch(() => undefined)
   }
   process.once('SIGTERM', stop)
   process.once('SIGINT', stop)
   try {
     await server.start()
   } catch {
-    await server.close().catch(() => undefined)
-    await database.close().catch(() => undefined)
+    await completeRelayShutdown({
+      drainTimeoutMs: config.relay.drainTimeoutMs,
+      closeServer: () => server.close(),
+      closeDatabase: () => database.close(),
+      shutdownTelemetry: () => observability.shutdown(),
+      forceExit: (code) => process.exit(code),
+      warn: () => {
+        logger.warn(
+          { event: 'relay.shutdown.dependency_timeout' },
+          'Relay shutdown exceeded a dependency deadline',
+        )
+      },
+    })
     throw new Error('SurfGate relay startup failed.')
   }
 }
 
 void main().catch(() => {
-  logger.error({ event: 'relay.startup.failed' }, 'SurfGate relay failed to start')
+  process.stderr.write(
+    '{"service":"surfgate-relay","level":"error","event":"relay.startup.failed","message":"SurfGate relay failed to start"}\n',
+  )
   process.exitCode = 1
 })
