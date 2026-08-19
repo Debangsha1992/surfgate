@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist",
+    "migrations",
+    "package.json"
+  ],
   "dependencies": {
     "@surfgate/config": "workspace:*",
     "@surfgate/contracts": "workspace:*",
@@ -23,6 +28,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "db:migrate": "pnpm build && node dist/database/migrate.js",
+    "db:restore-drill": "pnpm build && node dist/database/restore-drill.js",
+    "reconcile:sessions": "pnpm build && node dist/reconcile.js",
     "dev": "pnpm build && node --enable-source-maps dist/main.js",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --config ../../vitest.config.ts --root . --exclude '**/*.integration.test.ts' --exclude '**/*.live.test.ts'",

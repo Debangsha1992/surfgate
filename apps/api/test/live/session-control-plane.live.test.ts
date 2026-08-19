@@ -39,7 +39,10 @@ describe('live authenticated session control plane', () => {
     async () => {
       const testURL = config.database.testURL!
       assertTestDatabaseURL(testURL)
-      const database = createDatabase({ url: testURL })
+      const database = createDatabase({
+        url: testURL,
+        requiredMigration: '0014-session-reconciliation-claim-index.sql',
+      })
       const redis = createRedisRateLimitStore(config.redis)
       let app: ReturnType<typeof buildAPIApplication> | undefined
       try {

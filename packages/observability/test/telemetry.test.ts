@@ -222,6 +222,10 @@ describe('production telemetry adapters', () => {
         to: `ten_${identity}`,
         outcome: 'conflict',
       })
+      adapters.controlPlane.recordSessionReconciliation?.({
+        outcome: 'suspected_provider_leak',
+        count: index,
+      })
       adapters.controlPlane.recordRoutingDecision?.({
         outcome: 'selected',
         policyVersion: `tenant_${identity}`,
@@ -284,6 +288,7 @@ describe('production telemetry adapters', () => {
     }
     expect(counts.get('surfgate.auth.attempts')).toBe(1)
     expect(counts.get('surfgate.session.transitions')).toBe(1)
+    expect(counts.get('surfgate.session.reconciliation')).toBe(1)
     expect(counts.get('surfgate.routing.decisions')).toBe(1)
     expect(counts.get('surfgate.routing.candidate_rejections')).toBe(1)
     expect(Math.max(...counts.values())).toBeLessThanOrEqual(12)

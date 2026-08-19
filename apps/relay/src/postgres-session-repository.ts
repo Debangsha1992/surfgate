@@ -35,6 +35,8 @@ export function createRelayDatabase(config: DatabaseConfig): RelayDatabase {
   const pool = new Pool({
     connectionString: config.url.href,
     connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 30_000,
+    maxLifetimeSeconds: 60 * 30,
     query_timeout: 5_000,
     statement_timeout: 5_000,
     max: 10,
@@ -65,8 +67,13 @@ export function createRelayDatabase(config: DatabaseConfig): RelayDatabase {
     },
     async health(): Promise<'ready' | 'unavailable'> {
       try {
-        await pool.query('select 1')
-        return 'ready'
+        const result = await pool.query<{ compatible: boolean }>(
+          `select exists(
+             select 1 from surfgate_migrations where name = $1
+           ) as compatible`,
+          [config.requiredMigration],
+        )
+        return result.rows[0]?.compatible === true ? 'ready' : 'unavailable'
       } catch {
         return 'unavailable'
       }

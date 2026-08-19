@@ -3,13 +3,21 @@ export {
   ConfigurationError,
   type ConfigurationIssue,
 } from './configuration-error.js'
-export { loadConfig, type LoadConfigOptions } from './load-config.js'
+export {
+  loadConfig,
+  loadDatabaseMigrationConfig,
+  loadReconciliationConfig,
+  loadRelayConfig,
+  loadWorkerConfig,
+  type LoadConfigOptions,
+} from './load-config.js'
 export type {
   APIConfig,
   CloudflareConfig,
   CloudflareCredentials,
   ControlPlaneConfig,
   DatabaseConfig,
+  DatabaseMigrationConfig,
   EnvironmentSource,
   LogLevel,
   ManagedTaskConfig,
@@ -20,10 +28,21 @@ export type {
   RuntimeConfig,
   RuntimeEnvironment,
   ProviderSessionEncryptionConfig,
+  ReconciliationConfig,
+  RelayServiceConfig,
+  RawCDPAccess,
   RelayTokenSigningConfig,
   SecurityConfig,
   SurfGateConfig,
+  SymmetricKeyConfig,
   TelemetryConfig,
   WorkerConfig,
+  WorkerServiceConfig,
 } from './types.js'
-export { parseConfig } from './validation.js'
+export {
+  parseConfig,
+  parseDatabaseMigrationConfig,
+  parseReconciliationConfig,
+  parseRelayConfig,
+  parseWorkerConfig,
+} from './validation.js'

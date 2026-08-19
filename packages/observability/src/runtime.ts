@@ -9,7 +9,7 @@ import type { TelemetryConfig } from '@surfgate/config'
 
 import { createTelemetryAdapters, type TelemetryAdapters } from './telemetry.js'
 
-export type ServiceComponent = 'api' | 'relay' | 'worker'
+export type ServiceComponent = 'api' | 'reconciler' | 'relay' | 'worker'
 
 export type TelemetryRuntime = TelemetryAdapters &
   Readonly<{

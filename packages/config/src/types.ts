@@ -31,21 +31,30 @@ export type RelayConfig = Readonly<{
 export type DatabaseConfig = Readonly<{
   url: URL
   testURL: URL | undefined
+  requiredMigration: string
 }>
 
-export type ProviderSessionEncryptionConfig = Readonly<{
+export type DatabaseMigrationConfig = Readonly<{
+  database: DatabaseConfig
+}>
+
+export type SymmetricKeyConfig = Readonly<{
   key: KeyObject
   keyID: string
 }>
 
-export type RelayTokenSigningConfig = Readonly<{
-  key: KeyObject
-  keyID: string
-}>
+export type ProviderSessionEncryptionConfig = SymmetricKeyConfig &
+  Readonly<{ decryptionKeys: readonly SymmetricKeyConfig[] }>
+
+export type RelayTokenSigningConfig = SymmetricKeyConfig &
+  Readonly<{ verificationKeys: readonly SymmetricKeyConfig[] }>
+
+export type RawCDPAccess = 'disabled' | 'trusted'
 
 export type SecurityConfig = Readonly<{
   providerSessionEncryption: ProviderSessionEncryptionConfig | undefined
   relayTokenSigning: RelayTokenSigningConfig | undefined
+  rawCDPAccess: RawCDPAccess
 }>
 
 export type RedisConfig = Readonly<{
@@ -57,6 +66,8 @@ export type ControlPlaneConfig = Readonly<{
   allocationTimeoutMs: number
   terminationTimeoutMs: number
   idempotencyWaitTimeoutMs: number
+  reconciliationStaleAfterMs: number
+  reconciliationBatchSize: number
   quotas: Readonly<{
     requestsPerMinute: number
     maxConcurrentSessions: number
@@ -132,4 +143,26 @@ export type SurfGateConfig = Readonly<{
   security: SecurityConfig
   controlPlane: ControlPlaneConfig
 }>
+
+export type ReconciliationConfig = Pick<
+  SurfGateConfig,
+  'cloudflare' | 'controlPlane' | 'database' | 'runtime' | 'security' | 'telemetry'
+>
+
+export type RelayServiceConfig = Pick<
+  SurfGateConfig,
+  'cloudflare' | 'database' | 'redis' | 'relay' | 'runtime' | 'security' | 'telemetry'
+>
+
+export type WorkerServiceConfig = Pick<
+  SurfGateConfig,
+  | 'cloudflare'
+  | 'database'
+  | 'objectStorage'
+  | 'runtime'
+  | 'security'
+  | 'tasks'
+  | 'telemetry'
+  | 'worker'
+>
 import type { KeyObject } from 'node:crypto'

@@ -2,8 +2,21 @@ import { readFileSync } from 'node:fs'
 import { parseEnv } from 'node:util'
 
 import { ConfigurationError } from './configuration-error.js'
-import type { EnvironmentSource, SurfGateConfig } from './types.js'
-import { parseConfig } from './validation.js'
+import type {
+  DatabaseMigrationConfig,
+  EnvironmentSource,
+  ReconciliationConfig,
+  RelayServiceConfig,
+  SurfGateConfig,
+  WorkerServiceConfig,
+} from './types.js'
+import {
+  parseConfig,
+  parseDatabaseMigrationConfig,
+  parseReconciliationConfig,
+  parseRelayConfig,
+  parseWorkerConfig,
+} from './validation.js'
 
 const DEFAULT_DOT_ENV_PATH = new URL('../../../.env', import.meta.url)
 
@@ -32,14 +45,36 @@ function readDotEnv(path: string | URL, optional: boolean): EnvironmentSource {
   }
 }
 
-export function loadConfig(options: LoadConfigOptions = {}): SurfGateConfig {
+function loadEnvironment(options: LoadConfigOptions): EnvironmentSource {
   const environment = options.env ?? process.env
   const runtimeEnvironment = environment.NODE_ENV?.trim() ?? 'development'
   if (runtimeEnvironment === 'production') {
-    return parseConfig(environment)
+    return environment
   }
 
   const dotEnvPath = options.dotEnvPath ?? DEFAULT_DOT_ENV_PATH
   const dotEnv = readDotEnv(dotEnvPath, options.dotEnvPath === undefined)
-  return parseConfig({ ...dotEnv, ...environment, NODE_ENV: runtimeEnvironment })
+  return { ...dotEnv, ...environment, NODE_ENV: runtimeEnvironment }
+}
+
+export function loadConfig(options: LoadConfigOptions = {}): SurfGateConfig {
+  return parseConfig(loadEnvironment(options))
+}
+
+export function loadDatabaseMigrationConfig(
+  options: LoadConfigOptions = {},
+): DatabaseMigrationConfig {
+  return parseDatabaseMigrationConfig(loadEnvironment(options))
+}
+
+export function loadReconciliationConfig(options: LoadConfigOptions = {}): ReconciliationConfig {
+  return parseReconciliationConfig(loadEnvironment(options))
+}
+
+export function loadRelayConfig(options: LoadConfigOptions = {}): RelayServiceConfig {
+  return parseRelayConfig(loadEnvironment(options))
+}
+
+export function loadWorkerConfig(options: LoadConfigOptions = {}): WorkerServiceConfig {
+  return parseWorkerConfig(loadEnvironment(options))
 }

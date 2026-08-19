@@ -62,6 +62,7 @@ function fixture(
     failActivationAndRecoveryRead?: boolean
     failFirstAudit?: boolean
     requestFailure?: 'rate_limit' | 'redis' | 'target'
+    rawCDPAccess?: 'disabled' | 'trusted'
     withoutRelay?: boolean
   }> = {},
 ) {
@@ -194,6 +195,8 @@ function fixture(
       allocationTimeoutMs: 100,
       terminationTimeoutMs: 100,
       idempotencyWaitTimeoutMs: 100,
+      reconciliationBatchSize: 10,
+      reconciliationStaleAfterMs: 30_000,
       quotas: { requestsPerMinute: 10, maxConcurrentSessions: 2, maxSessionDurationSeconds: 600 },
     },
     ids: {
@@ -218,6 +221,7 @@ function fixture(
             authorization: { isSessionRevoked, revokeSession },
             publicURL: new URL('ws://127.0.0.1:8081'),
             tokenTTLSeconds: 60,
+            rawCDPAccess: options.rawCDPAccess ?? 'trusted',
           },
         }),
   })
@@ -277,6 +281,17 @@ describe('SessionService', () => {
     })
     expect(response.token).not.toContain('cloudflare')
     expect(setup.isSessionRevoked).toHaveBeenCalledWith(context.tenantID, created.session.id)
+  })
+
+  it('fails closed when raw CDP access is disabled by production policy', async () => {
+    const setup = fixture('success', { rawCDPAccess: 'disabled' })
+    const created = await setup.service.create(context, {}, 'relay-disabled')
+
+    await expect(setup.service.issueRelayToken(context, created.session.id)).rejects.toMatchObject({
+      code: 'POLICY_RAW_CDP_DISABLED',
+      statusCode: 403,
+    })
+    expect(setup.isSessionRevoked).not.toHaveBeenCalled()
   })
 
   it('returns tenant-safe not-found before exposing relay dependency state', async () => {

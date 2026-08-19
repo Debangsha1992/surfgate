@@ -140,6 +140,7 @@ async function startRelay(
       },
       telemetry,
       logger,
+      rawCDPAccess: 'trusted',
     },
   )
   running.push(relay)
@@ -158,6 +159,44 @@ function connect(port: number, token = credential()): WebSocket {
 }
 
 describe('relay server integration', () => {
+  it('rejects upgrades before authentication when raw CDP is disabled', async () => {
+    const upstream = await upstreamEchoServer()
+    const coordination = coordinator()
+    const relay = createRelayServer(
+      {
+        host: '127.0.0.1',
+        port: 0,
+        publicURL: new URL('ws://127.0.0.1:8081'),
+        tokenTTLSeconds: 60,
+        connectTimeoutMs: 500,
+        idleTimeoutMs: 5_000,
+        absoluteTimeoutMs: 30_000,
+        maxMessageBytes: 1_024,
+        maxQueuedBytes: 2_048,
+        leaseTTLms: 1_000,
+        authorizationCheckIntervalMs: 250,
+        drainTimeoutMs: 1_000,
+      },
+      {
+        tokens,
+        sessions: { findSessionForTenant: () => Promise.resolve(session()) },
+        coordinator: coordination.value,
+        upstream: { resolve: () => ({ endpoint: upstream.url, headers: {} }) },
+        rawCDPAccess: 'disabled',
+      },
+    )
+    running.push(relay)
+    try {
+      const port = await relay.start()
+      const error = await new Promise<Error>((resolve) => {
+        const client = connect(port)
+        client.once('error', resolve)
+      })
+      expect(error.message).toContain('403')
+    } finally {
+      await upstream.close()
+    }
+  })
   it('bounds shutdown when a distributed coordinator does not close', async () => {
     const upstream = await upstreamEchoServer()
     const base = coordinator()

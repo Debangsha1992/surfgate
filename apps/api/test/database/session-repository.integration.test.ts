@@ -139,4 +139,11 @@ describeWithDatabase('tenant-scoped PostgreSQL sessions', () => {
     expect(repeated.status).toBe('terminated')
     expect(repeated.version).toBe(2)
   })
+
+  it('executes the bounded reconciliation candidate query', async () => {
+    const sessions = new PostgresSessionRepository(database)
+    await expect(
+      sessions.findReconciliationCandidates({ staleAfterMs: 60_000, batchSize: 10 }),
+    ).resolves.toEqual(expect.any(Array))
+  })
 })

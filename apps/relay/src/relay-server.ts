@@ -93,11 +93,13 @@ function rejectUpgrade(socket: Duplex, statusCode: number): void {
       ? 'Unauthorized'
       : statusCode === 404
         ? 'Not Found'
-        : statusCode === 409
-          ? 'Conflict'
-          : statusCode === 502
-            ? 'Bad Gateway'
-            : 'Service Unavailable'
+        : statusCode === 403
+          ? 'Forbidden'
+          : statusCode === 409
+            ? 'Conflict'
+            : statusCode === 502
+              ? 'Bad Gateway'
+              : 'Service Unavailable'
   socket.end(
     `HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
   )
@@ -193,6 +195,7 @@ export function createRelayServer(
     upstream: UpstreamConnectionResolver
     telemetry?: RelayTelemetry
     logger?: RelayLogger
+    rawCDPAccess?: 'disabled' | 'trusted'
   }>,
 ): RelayServer {
   const telemetry = dependencies.telemetry ?? NOOP_RELAY_TELEMETRY
@@ -271,6 +274,10 @@ export function createRelayServer(
   ): Promise<void> => {
     if (draining) {
       rejectUpgrade(socket, 503)
+      return
+    }
+    if (dependencies.rawCDPAccess !== 'trusted') {
+      rejectUpgrade(socket, 403)
       return
     }
     let pathSessionID: ReturnType<typeof SessionIDSchema.parse>

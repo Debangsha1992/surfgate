@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist",
+    "package.json"
+  ],
   "dependencies": {
     "@surfgate/config": "workspace:*",
     "@surfgate/contracts": "workspace:*",

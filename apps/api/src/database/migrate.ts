@@ -3,12 +3,14 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { loadConfig } from '@surfgate/config'
+import { loadDatabaseMigrationConfig } from '@surfgate/config'
 
 import { createDatabase, type Database, type Queryable } from './database.js'
 
 const MIGRATION_FILE_PATTERN = /^\d{4}-[a-z0-9-]+\.sql$/u
 const MIGRATION_LOCK_ID = 7_602_451_903
+const ONLINE_INDEX_DIRECTIVE = /^-- surfgate:online-index ([a-z][a-z0-9_]*)$/mu
+const ONLINE_MIGRATION_TIMEOUT_MS = 30 * 60 * 1_000
 
 type AppliedMigrationRow = Readonly<{ name: string; checksum: string }>
 
@@ -26,6 +28,70 @@ async function ensureLedger(transaction: Queryable): Promise<void> {
   `)
 }
 
+async function appliedMigration(
+  connection: Queryable,
+  name: string,
+): Promise<AppliedMigrationRow | undefined> {
+  return (
+    await connection.query<AppliedMigrationRow>(
+      'select name, checksum from surfgate_migrations where name = $1',
+      [name],
+    )
+  )[0]
+}
+
+function assertChecksum(
+  filename: string,
+  existing: AppliedMigrationRow | undefined,
+  expected: string,
+): boolean {
+  if (existing === undefined) return false
+  if (existing.checksum !== expected) {
+    throw new Error(`Applied migration ${basename(filename)} has changed.`)
+  }
+  return true
+}
+
+async function runOnlineIndexMigration(
+  database: Database,
+  filename: string,
+  sql: string,
+  expectedChecksum: string,
+  indexName: string,
+): Promise<void> {
+  await database.connection(async (connection) => {
+    await connection.query('select pg_advisory_lock($1)', [MIGRATION_LOCK_ID])
+    try {
+      if (assertChecksum(filename, await appliedMigration(connection, filename), expectedChecksum))
+        return
+      await connection.query(`select set_config('statement_timeout', $1, false)`, [
+        String(ONLINE_MIGRATION_TIMEOUT_MS),
+      ])
+      await connection.query(`select set_config('lock_timeout', '5000', false)`)
+      const indexes = await connection.query<{ exists: boolean }>(
+        `select exists(
+           select 1 from pg_class index_class
+           join pg_index index_definition on index_definition.indexrelid = index_class.oid
+           where index_class.relname = $1 and pg_table_is_visible(index_class.oid)
+         ) as exists`,
+        [indexName],
+      )
+      // A process can stop after CREATE INDEX CONCURRENTLY but before the ledger write. Recreate
+      // any unledgered reserved name so a manual or invalid look-alike can never imply readiness.
+      if (indexes[0]?.exists === true) {
+        await connection.query(`drop index concurrently if exists "${indexName}"`)
+      }
+      await connection.query(sql)
+      await connection.query('insert into surfgate_migrations (name, checksum) values ($1, $2)', [
+        filename,
+        expectedChecksum,
+      ])
+    } finally {
+      await connection.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK_ID])
+    }
+  })
+}
+
 export async function runMigrations(database: Database, directory: string): Promise<void> {
   const sqlFilenames = readdirSync(directory).filter((filename) => filename.endsWith('.sql'))
   const invalidFilename = sqlFilenames.find((filename) => !MIGRATION_FILE_PATTERN.test(filename))
@@ -39,21 +105,17 @@ export async function runMigrations(database: Database, directory: string): Prom
   })
 
   for (const filename of filenames) {
+    const sql = readFileSync(join(directory, filename), 'utf8')
+    const expectedChecksum = checksum(sql)
+    const onlineIndexName = ONLINE_INDEX_DIRECTIVE.exec(sql)?.[1]
+    if (onlineIndexName !== undefined) {
+      await runOnlineIndexMigration(database, filename, sql, expectedChecksum, onlineIndexName)
+      continue
+    }
     await database.transaction(async (transaction) => {
       await transaction.query('select pg_advisory_xact_lock($1)', [MIGRATION_LOCK_ID])
-      const sql = readFileSync(join(directory, filename), 'utf8')
-      const expectedChecksum = checksum(sql)
-      const applied = await transaction.query<AppliedMigrationRow>(
-        'select name, checksum from surfgate_migrations where name = $1',
-        [filename],
-      )
-      const existingChecksum = applied[0]?.checksum
-      if (existingChecksum !== undefined) {
-        if (existingChecksum !== expectedChecksum) {
-          throw new Error(`Applied migration ${basename(filename)} has changed.`)
-        }
+      if (assertChecksum(filename, await appliedMigration(transaction, filename), expectedChecksum))
         return
-      }
       await transaction.query(sql)
       await transaction.query('insert into surfgate_migrations (name, checksum) values ($1, $2)', [
         filename,
@@ -64,8 +126,11 @@ export async function runMigrations(database: Database, directory: string): Prom
 }
 
 export async function runConfiguredMigrations(): Promise<void> {
-  const config = loadConfig()
-  const database = createDatabase(config.database)
+  const config = loadDatabaseMigrationConfig()
+  const database = createDatabase(config.database, {
+    queryTimeoutMs: ONLINE_MIGRATION_TIMEOUT_MS,
+    statementTimeoutMs: ONLINE_MIGRATION_TIMEOUT_MS,
+  })
   try {
     await runMigrations(database, fileURLToPath(new URL('../../migrations/', import.meta.url)))
   } finally {
@@ -73,9 +138,16 @@ export async function runConfiguredMigrations(): Promise<void> {
   }
 }
 
+export function validateConfiguredMigration(): void {
+  loadDatabaseMigrationConfig()
+}
+
 const entrypoint = process.argv[1]
 if (entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href) {
-  runConfiguredMigrations().catch(() => {
+  const operation = process.argv.includes('--validate-config')
+    ? Promise.resolve(validateConfiguredMigration())
+    : runConfiguredMigrations()
+  operation.catch(() => {
     console.error('Database migration failed.')
     process.exitCode = 1
   })

@@ -25,6 +25,10 @@ const RevocationMessageSchema = z
   .strict()
   .readonly()
 
+function destroyIfOpen(client: Readonly<{ isOpen: boolean; destroy(): void }>): void {
+  if (client.isOpen) client.destroy()
+}
+
 export type RelayRevocationMessage = z.infer<typeof RevocationMessageSchema>
 
 export function relayRedisReconnectDelay(retries: number): number | Error {
@@ -51,16 +55,16 @@ export interface RelayCoordinator extends RelayRevocationReader {
   close(): Promise<void>
 }
 
-async function bounded<Result>(operation: Promise<Result>): Promise<Result> {
+async function bounded<Result>(operation: Promise<Result>, onTimeout: () => void): Promise<Result> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       operation,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error('Redis operation timed out.')),
-          COMMAND_TIMEOUT_MS,
-        )
+        timer = setTimeout(() => {
+          onTimeout()
+          reject(new Error('Redis operation timed out.'))
+        }, COMMAND_TIMEOUT_MS)
       }),
     ])
   } finally {
@@ -91,21 +95,25 @@ export function createRelayCoordinator(config: RedisConfig): RelayCoordinator {
     clientConnection ??= client.connect().finally(() => {
       clientConnection = undefined
     })
-    await bounded(clientConnection)
+    await bounded(clientConnection, () => destroyIfOpen(client))
   }
   const ensureSubscriber = async (): Promise<void> => {
     if (subscriber.isReady) return
     subscriberConnection ??= subscriber.connect().finally(() => {
       subscriberConnection = undefined
     })
-    await bounded(subscriberConnection)
+    await bounded(subscriberConnection, () => destroyIfOpen(subscriber))
   }
   return Object.freeze({
     async isSessionRevoked(rawTenantID: TenantID, rawSessionID: SessionID): Promise<boolean> {
       const tenantID = TenantIDSchema.parse(rawTenantID)
       const sessionID = SessionIDSchema.parse(rawSessionID)
       await ensureClient()
-      return (await bounded(client.exists(revokedKey(tenantID, sessionID)))) === 1
+      return (
+        (await bounded(client.exists(revokedKey(tenantID, sessionID)), () =>
+          destroyIfOpen(client),
+        )) === 1
+      )
     },
     async acquireController(
       input: Readonly<{ tenantID: TenantID; sessionID: SessionID; ownerID: string; ttlMs: number }>,
@@ -119,6 +127,7 @@ export function createRelayCoordinator(config: RedisConfig): RelayCoordinator {
             NX: true,
             PX: input.ttlMs,
           }),
+          () => destroyIfOpen(client),
         )) === 'OK'
       )
     },
@@ -134,6 +143,7 @@ export function createRelayCoordinator(config: RedisConfig): RelayCoordinator {
             keys: [controllerKey(tenantID, sessionID)],
             arguments: [input.ownerID, String(input.ttlMs)],
           }),
+          () => destroyIfOpen(client),
         )) === 1
       )
     },
@@ -148,6 +158,7 @@ export function createRelayCoordinator(config: RedisConfig): RelayCoordinator {
           keys: [controllerKey(tenantID, sessionID)],
           arguments: [input.ownerID],
         }),
+        () => destroyIfOpen(client),
       )
     },
     async subscribeToRevocations(
@@ -162,15 +173,23 @@ export function createRelayCoordinator(config: RedisConfig): RelayCoordinator {
           // Malformed messages never authorize or affect sessions.
         }
       }
-      await bounded(subscriber.subscribe(REVOCATION_CHANNEL, onMessage))
+      await bounded(subscriber.subscribe(REVOCATION_CHANNEL, onMessage), () =>
+        destroyIfOpen(subscriber),
+      )
       return async (): Promise<void> => {
-        if (subscriber.isReady) await bounded(subscriber.unsubscribe(REVOCATION_CHANNEL, onMessage))
+        if (subscriber.isReady) {
+          await bounded(subscriber.unsubscribe(REVOCATION_CHANNEL, onMessage), () =>
+            destroyIfOpen(subscriber),
+          )
+        }
       }
     },
     async health(): Promise<'ready' | 'unavailable'> {
       try {
         await ensureClient()
-        return (await bounded(client.ping())) === 'PONG' ? 'ready' : 'unavailable'
+        return (await bounded(client.ping(), () => destroyIfOpen(client))) === 'PONG'
+          ? 'ready'
+          : 'unavailable'
       } catch {
         return 'unavailable'
       }
@@ -179,9 +198,9 @@ export function createRelayCoordinator(config: RedisConfig): RelayCoordinator {
       for (const connection of [subscriber, client]) {
         if (!connection.isOpen) continue
         try {
-          await bounded(connection.quit())
+          await bounded(connection.quit(), () => destroyIfOpen(connection))
         } catch {
-          connection.destroy()
+          destroyIfOpen(connection)
         }
       }
     },

@@ -71,6 +71,7 @@ export type SessionServiceDependencies = Readonly<{
     authorization: RelayAuthorizationStore
     publicURL: URL
     tokenTTLSeconds: number
+    rawCDPAccess: 'disabled' | 'trusted'
   }>
 }>
 
@@ -402,6 +403,9 @@ export class SessionService {
     const relay = this.#dependencies.relay
     if (relay === undefined) {
       throw new ControlPlaneHTTPError('INTERNAL_DEPENDENCY_UNAVAILABLE', 503)
+    }
+    if (relay.rawCDPAccess !== 'trusted') {
+      throw new ControlPlaneHTTPError('POLICY_RAW_CDP_DISABLED', 403)
     }
     const nowMs = this.#now().getTime()
     const expiresAtMs = session.expiresAt === null ? Number.NaN : Date.parse(session.expiresAt)

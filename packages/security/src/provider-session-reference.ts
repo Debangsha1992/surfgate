@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 
-import type { ProviderSessionEncryptionConfig } from '@surfgate/config'
+import type { ProviderSessionEncryptionConfig, SymmetricKeyConfig } from '@surfgate/config'
 import { SessionIDSchema, TenantIDSchema, type SessionID, type TenantID } from '@surfgate/contracts'
 import { ProviderSessionSchema, type ProviderSession } from '@surfgate/provider-core'
 import { RoutingCandidateIdentitySchema, type RoutingCandidateIdentity } from '@surfgate/router'
@@ -40,11 +40,17 @@ function associatedData(context: ProviderSessionReferenceContext): Buffer {
 }
 
 export function createProviderSessionReferenceProtector(
-  config: ProviderSessionEncryptionConfig,
+  config: SymmetricKeyConfig &
+    Readonly<{ decryptionKeys?: ProviderSessionEncryptionConfig['decryptionKeys'] }>,
 ): ProviderSessionReferenceProtector {
-  if (!KEY_ID_PATTERN.test(config.keyID)) {
+  const keys = [config, ...(config.decryptionKeys ?? [])]
+  if (keys.some(({ keyID }) => !KEY_ID_PATTERN.test(keyID))) {
     throw new Error('Provider session encryption key ID is invalid.')
   }
+  if (new Set(keys.map(({ keyID }) => keyID)).size !== keys.length) {
+    throw new Error('Provider session encryption key IDs must be unique.')
+  }
+  const decryptionKeys = new Map(keys.map(({ keyID, key }) => [keyID, key] as const))
   return Object.freeze({
     encrypt(
       session: ProviderSession,
@@ -68,20 +74,19 @@ export function createProviderSessionReferenceProtector(
     ): ProtectedProviderSession {
       try {
         const match = ENVELOPE_PATTERN.exec(ciphertext)
+        const keyID = match?.[1]
+        const key = keyID === undefined ? undefined : decryptionKeys.get(keyID)
         if (
-          match?.[1] !== config.keyID ||
-          match[2] === undefined ||
+          key === undefined ||
+          match?.[2] === undefined ||
           match[3] === undefined ||
           match[4] === undefined
         ) {
           throw new Error('Invalid envelope')
         }
-        const decipher = createDecipheriv(
-          'aes-256-gcm',
-          config.key,
-          Buffer.from(match[2], 'base64url'),
-          { authTagLength: 16 },
-        )
+        const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(match[2], 'base64url'), {
+          authTagLength: 16,
+        })
         decipher.setAAD(associatedData(context))
         decipher.setAuthTag(Buffer.from(match[4], 'base64url'))
         const plaintext = Buffer.concat([

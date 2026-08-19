@@ -81,4 +81,24 @@ describe('provider session reference protection', () => {
       }),
     ).toThrowError('Provider session reference could not be decrypted.')
   })
+
+  it('decrypts an old envelope during a bounded key-rotation overlap', () => {
+    const oldKey = { key: createSecretKey(Buffer.alloc(32, 2)), keyID: 'provider-old' } as const
+    const ciphertext = createProviderSessionReferenceProtector(oldKey).encrypt(
+      PROVIDER_SESSION,
+      CANDIDATE,
+      CONTEXT,
+    )
+    const rotated = createProviderSessionReferenceProtector({
+      key: createSecretKey(Buffer.alloc(32, 3)),
+      keyID: 'provider-current',
+      decryptionKeys: [oldKey],
+    })
+
+    expect(rotated.decrypt(ciphertext, CONTEXT)).toEqual({
+      candidate: CANDIDATE,
+      session: PROVIDER_SESSION,
+    })
+    expect(rotated.encrypt(PROVIDER_SESSION, CANDIDATE, CONTEXT)).toContain('.provider-current.')
+  })
 })

@@ -96,6 +96,7 @@ describe('developer-safe relay load smoke', () => {
             headers: {},
           }),
         },
+        rawCDPAccess: 'trusted',
       },
     )
     const eventLoop = monitorEventLoopDelay({ resolution: 10 })

@@ -191,6 +191,7 @@ describe('Playwright CDP compatibility', () => {
           }),
         },
         logger,
+        rawCDPAccess: 'trusted',
       },
     )
     runningRelays.push(relay)
