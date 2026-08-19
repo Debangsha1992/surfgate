@@ -1,4 +1,4 @@
-import { loadConfig } from '@surfgate/config'
+import { loadRelayConfig } from '@surfgate/config'
 import { createStructuredLogger, createTelemetryRuntime } from '@surfgate/observability'
 import { resolveCloudflareBrowserRunConnection } from '@surfgate/provider-cloudflare'
 import {
@@ -13,7 +13,7 @@ import { createRelayServer, type RelayLogger } from './relay-server.js'
 import { createUpstreamConnectionResolver } from './upstream-resolver.js'
 
 async function main(): Promise<void> {
-  const config = loadConfig()
+  const config = loadRelayConfig()
   const encryption = config.security.providerSessionEncryption
   const signing = config.security.relayTokenSigning
   if (encryption === undefined || signing === undefined) {
@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const database = createRelayDatabase(config.database)
   const coordinator = createRelayCoordinator(config.redis)
   const server = createRelayServer(config.relay, {
-    tokens: createRelayTokenService(signing),
+    tokens: createRelayTokenService(signing, { verificationKeys: signing.verificationKeys }),
     sessions: database,
     coordinator,
     upstream: createUpstreamConnectionResolver({
@@ -37,6 +37,7 @@ async function main(): Promise<void> {
     }),
     telemetry: observability.relay,
     logger,
+    rawCDPAccess: config.security.rawCDPAccess,
   })
   let stopping: Promise<void> | undefined
   const stop = (): void => {

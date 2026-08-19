@@ -21,12 +21,22 @@ const VALID_PRODUCTION_ENVIRONMENT = {
   ...VALID_DEVELOPMENT_ENVIRONMENT,
   NODE_ENV: 'production',
   SURFGATE_RELAY_PUBLIC_URL: 'wss://relay.surfgate.example',
-  DATABASE_URL: 'postgresql://surfgate@database.surfgate.example/surfgate?sslmode=require',
+  DATABASE_URL: 'postgresql://surfgate@database.surfgate.example/surfgate?sslmode=verify-full',
   REDIS_URL: 'rediss://redis.surfgate.example:6379',
   S3_ENDPOINT: 'https://objects.surfgate.example',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'https://telemetry.surfgate.example',
-  SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
-  SURFGATE_RELAY_TOKEN_SIGNING_KEY: Buffer.alloc(32, 8).toString('base64'),
+  SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY: Buffer.from(
+    '2f6c986f2f85b0420b506c412bea1925d29c4827d4a6362041f00306e4cb385c',
+    'hex',
+  ).toString('base64'),
+  SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY_ID: 'provider-session-v1',
+  SURFGATE_RELAY_TOKEN_SIGNING_KEY: Buffer.from(
+    '9f0b12ca173e2ae8d292cf86014e434ff24d2fe7a527225633df66228774ecac',
+    'hex',
+  ).toString('base64'),
+  SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID: 'relay-token-v1',
+  CLOUDFLARE_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
+  CLOUDFLARE_BROWSER_RUN_API_TOKEN: 'production-provider-token',
 } as const
 
 describe('parseConfig', () => {
@@ -49,6 +59,7 @@ describe('parseConfig', () => {
       tokenTTLSeconds: 60,
     })
     expect(config.database.url.protocol).toBe('postgresql:')
+    expect(config.database.requiredMigration).toBe('0014-session-reconciliation-claim-index.sql')
     expect(config.database.testURL).toBeUndefined()
     expect(config.redis.url.protocol).toBe('redis:')
     expect(config.objectStorage).toEqual({
@@ -75,6 +86,8 @@ describe('parseConfig', () => {
       allocationTimeoutMs: 30_000,
       healthTimeoutMs: 5_000,
       idempotencyWaitTimeoutMs: 35_000,
+      reconciliationBatchSize: 100,
+      reconciliationStaleAfterMs: 120_000,
       quotas: {
         maxConcurrentSessions: 10,
         maxSessionDurationSeconds: 600,
@@ -109,6 +122,123 @@ describe('parseConfig', () => {
     expect(config.runtime.environment).toBe('production')
     expect(config.relay.publicURL.protocol).toBe('wss:')
     expect(config.redis.url.protocol).toBe('rediss:')
+    expect(config.security.rawCDPAccess).toBe('disabled')
+  })
+
+  it('requires an explicit trusted deployment decision to enable raw CDP in production', () => {
+    const config = parseConfig({
+      ...VALID_PRODUCTION_ENVIRONMENT,
+      SURFGATE_RAW_CDP_ACCESS: 'trusted',
+    })
+
+    expect(config.security.rawCDPAccess).toBe('trusted')
+  })
+
+  it('rejects obvious development key material in production', () => {
+    expect(() =>
+      parseConfig({
+        ...VALID_PRODUCTION_ENVIRONMENT,
+        SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+      }),
+    ).toThrowError(/SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY/u)
+  })
+
+  it('rejects key reuse across production cryptographic purposes', () => {
+    expect(() =>
+      parseConfig({
+        ...VALID_PRODUCTION_ENVIRONMENT,
+        SURFGATE_RELAY_TOKEN_SIGNING_KEY:
+          VALID_PRODUCTION_ENVIRONMENT.SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY,
+      }),
+    ).toThrowError(/SURFGATE_RELAY_TOKEN_SIGNING_KEY/u)
+  })
+
+  it('rejects cross-purpose key reuse across rotation overlap sets', () => {
+    expect(() =>
+      parseConfig({
+        ...VALID_PRODUCTION_ENVIRONMENT,
+        SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY:
+          VALID_PRODUCTION_ENVIRONMENT.SURFGATE_RELAY_TOKEN_SIGNING_KEY,
+        SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY_ID: 'provider-old',
+      }),
+    ).toThrowError(/SURFGATE_RELAY_TOKEN_SIGNING_KEY/u)
+  })
+
+  it.each([
+    ['DATABASE_URL', 'postgresql://surfgate@127.0.0.1/surfgate?sslmode=verify-full'],
+    ['REDIS_URL', 'rediss://localhost:6379'],
+    ['S3_ENDPOINT', 'https://127.0.0.1:9000'],
+    ['OTEL_EXPORTER_OTLP_ENDPOINT', 'https://telemetry.localhost'],
+    ['DATABASE_URL', 'postgresql://surfgate@[::1]/surfgate?sslmode=verify-full'],
+    ['REDIS_URL', 'rediss://[::]:6379'],
+    ['S3_ENDPOINT', 'https://[::ffff:127.0.0.1]:9000'],
+  ] as const)('rejects local production dependency host for %s', (key, value) => {
+    expect(() => parseConfig({ ...VALID_PRODUCTION_ENVIRONMENT, [key]: value })).toThrowError(
+      new RegExp(key),
+    )
+  })
+
+  it('parses previous encryption and signing keys for staged rotation', () => {
+    const config = parseConfig({
+      ...VALID_PRODUCTION_ENVIRONMENT,
+      SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY: Buffer.from(
+        'ed702e448be96c0072fbe2c7a860779ad50d112e840c5cc078ce5df319cf9885',
+        'hex',
+      ).toString('base64'),
+      SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY_ID: 'provider-old',
+      SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY: Buffer.from(
+        'ee2764ce9bf12fa58d6efde476e987b2fafdd72fbbf6b1b93d774439b546ba72',
+        'hex',
+      ).toString('base64'),
+      SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY_ID: 'relay-old',
+    })
+
+    expect(config.security.providerSessionEncryption?.decryptionKeys).toHaveLength(1)
+    expect(config.security.providerSessionEncryption?.decryptionKeys[0]?.keyID).toBe('provider-old')
+    expect(config.security.relayTokenSigning?.verificationKeys).toHaveLength(1)
+    expect(config.security.relayTokenSigning?.verificationKeys[0]?.keyID).toBe('relay-old')
+  })
+
+  it('rejects incomplete or duplicate rotation keys', () => {
+    expect(() =>
+      parseConfig({
+        ...VALID_PRODUCTION_ENVIRONMENT,
+        SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY: Buffer.from(
+          'ed702e448be96c0072fbe2c7a860779ad50d112e840c5cc078ce5df319cf9885',
+          'hex',
+        ).toString('base64'),
+      }),
+    ).toThrowError(/SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY_ID/u)
+
+    expect(() =>
+      parseConfig({
+        ...VALID_PRODUCTION_ENVIRONMENT,
+        SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY: Buffer.from(
+          'ee2764ce9bf12fa58d6efde476e987b2fafdd72fbbf6b1b93d774439b546ba72',
+          'hex',
+        ).toString('base64'),
+        SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY_ID: 'relay-token-v1',
+      }),
+    ).toThrowError(/SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY_ID/u)
+
+    expect(() =>
+      parseConfig({
+        ...VALID_PRODUCTION_ENVIRONMENT,
+        SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY:
+          VALID_PRODUCTION_ENVIRONMENT.SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY,
+        SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY_ID: 'provider-old',
+      }),
+    ).toThrowError(/SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY/u)
+  })
+
+  it('keeps reconciliation outside every valid in-flight provider deadline', () => {
+    expect(() =>
+      parseConfig({
+        ...VALID_DEVELOPMENT_ENVIRONMENT,
+        SURFGATE_PROVIDER_ALLOCATION_TIMEOUT_MS: '60000',
+        SURFGATE_RECONCILIATION_STALE_AFTER_MS: '120000',
+      }),
+    ).toThrowError(/SURFGATE_RECONCILIATION_STALE_AFTER_MS/u)
   })
 
   it.each([
@@ -119,6 +249,28 @@ describe('parseConfig', () => {
     ['OTEL_EXPORTER_OTLP_ENDPOINT', 'http://telemetry.surfgate.example'],
   ] as const)('rejects insecure production transport for %s', (key, value) => {
     expect(() => parseConfig({ ...VALID_PRODUCTION_ENVIRONMENT, [key]: value })).toThrowError(
+      new RegExp(key),
+    )
+  })
+
+  it.each([
+    'postgresql://surfgate@database.surfgate.example/surfgate?sslmode=require',
+    'postgresql://surfgate@database.surfgate.example/surfgate?sslmode=verify-full&sslmode=disable',
+    'postgresql://surfgate@database.surfgate.example/surfgate?sslmode=verify-full&ssl=false',
+    'postgresql://surfgate@database.surfgate.example/surfgate?sslmode=verify-full&uselibpqcompat=true',
+    'postgresql://surfgate@database.surfgate.example/surfgate?sslmode=verify-full&host=%2Fvar%2Frun%2Fpostgresql',
+    'postgresql://surfgate@database.surfgate.example/surfgate?sslmode=verify-full&host=127.0.0.1',
+  ])('rejects ambiguous or downgraded production PostgreSQL TLS: %s', (databaseURL) => {
+    expect(() =>
+      parseConfig({ ...VALID_PRODUCTION_ENVIRONMENT, DATABASE_URL: databaseURL }),
+    ).toThrowError(/DATABASE_URL/u)
+  })
+
+  it.each([
+    'SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY_ID',
+    'SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID',
+  ] as const)('requires explicit production key identity for %s', (key) => {
+    expect(() => parseConfig({ ...VALID_PRODUCTION_ENVIRONMENT, [key]: undefined })).toThrowError(
       new RegExp(key),
     )
   })
@@ -256,6 +408,18 @@ describe('parseConfig', () => {
     expect(config.database.testURL?.pathname).toBe('/surfgate_test')
   })
 
+  it.each(['host=production.example', 'port=6543', 'user=other', 'database=production'])(
+    'rejects TEST_DATABASE_URL authority override parameter %s',
+    (parameter) => {
+      expect(() =>
+        parseConfig({
+          ...VALID_DEVELOPMENT_ENVIRONMENT,
+          TEST_DATABASE_URL: `postgresql://surfgate@database.example/surfgate_test?${parameter}`,
+        }),
+      ).toThrowError(/TEST_DATABASE_URL/u)
+    },
+  )
+
   it('rejects an invalid provider-session encryption key without echoing it', () => {
     const invalidKey = 'not-a-valid-32-byte-secret'
 
@@ -293,6 +457,18 @@ describe('parseConfig', () => {
       /SURFGATE_RELAY_TOKEN_SIGNING_KEY/u,
     )
     expect(_key).toBeDefined()
+  })
+
+  it('requires Cloudflare provider credentials in production', () => {
+    const {
+      CLOUDFLARE_ACCOUNT_ID: _accountID,
+      CLOUDFLARE_BROWSER_RUN_API_TOKEN: _token,
+      ...withoutProviderCredentials
+    } = VALID_PRODUCTION_ENVIRONMENT
+
+    expect(() => parseConfig(withoutProviderCredentials)).toThrowError(/CLOUDFLARE_ACCOUNT_ID/u)
+    expect(_accountID).toBeDefined()
+    expect(_token).toBeDefined()
   })
 
   it('rejects weak relay-token signing material without echoing it', () => {

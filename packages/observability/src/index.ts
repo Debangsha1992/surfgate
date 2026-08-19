@@ -31,6 +31,11 @@ export type SessionTransitionObservation = Readonly<{
   outcome: 'success' | 'conflict'
 }>
 
+export type SessionReconciliationObservation = Readonly<{
+  outcome: 'recovered' | 'unresolved' | 'suspected_provider_leak'
+  count: number
+}>
+
 export type DependencyHealthObservation = Readonly<{
   dependency: 'postgresql' | 'redis' | 'object_storage'
   status: 'ready' | 'unavailable'
@@ -75,6 +80,7 @@ export interface ControlPlaneTelemetry {
   recordDatabaseHealth(status: 'ready' | 'unavailable'): void
   recordDependencyHealth?(input: DependencyHealthObservation): void
   recordSessionTransition(input: SessionTransitionObservation): void
+  recordSessionReconciliation?(input: SessionReconciliationObservation): void
   recordRoutingDecision?(input: RoutingDecisionObservation): void
   recordOperation?(input: ControlPlaneOperationObservation): void
   startSpan?: StartTelemetrySpan

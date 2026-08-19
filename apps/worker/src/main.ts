@@ -1,4 +1,4 @@
-import { loadConfig } from '@surfgate/config'
+import { loadWorkerConfig } from '@surfgate/config'
 import { createS3ArtifactStorage } from '@surfgate/object-storage'
 import { createStructuredLogger, createTelemetryRuntime } from '@surfgate/observability'
 import { CHROMIUM_CAPABILITIES } from '@surfgate/provider-chromium'
@@ -30,7 +30,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const config = loadConfig()
+  const config = loadWorkerConfig()
   const encryption = config.security.providerSessionEncryption
   if (encryption === undefined) throw new Error('Worker security configuration is incomplete.')
   const observability = createTelemetryRuntime(config.telemetry, 'worker')

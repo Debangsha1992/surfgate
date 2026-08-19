@@ -10,6 +10,7 @@ export interface Queryable {
 
 export interface Database extends Queryable {
   health(): Promise<'ready' | 'unavailable'>
+  connection<Result>(operation: (connection: Queryable) => Promise<Result>): Promise<Result>
   transaction<Result>(operation: (transaction: Queryable) => Promise<Result>): Promise<Result>
   close(): Promise<void>
 }
@@ -27,16 +28,33 @@ class PostgresQueryable implements Queryable {
 }
 
 class PostgresDatabase extends PostgresQueryable implements Database {
-  constructor(private readonly pool: Pool) {
+  constructor(
+    private readonly pool: Pool,
+    private readonly requiredMigration: string,
+  ) {
     super(pool)
   }
 
   async health(): Promise<'ready' | 'unavailable'> {
     try {
-      await this.query('select 1')
-      return 'ready'
+      const rows = await this.query<{ compatible: boolean }>(
+        `select exists(
+           select 1 from surfgate_migrations where name = $1
+         ) as compatible`,
+        [this.requiredMigration],
+      )
+      return rows[0]?.compatible === true ? 'ready' : 'unavailable'
     } catch {
       return 'unavailable'
+    }
+  }
+
+  async connection<Result>(operation: (connection: Queryable) => Promise<Result>): Promise<Result> {
+    const client = await this.pool.connect()
+    try {
+      return await operation(new PostgresQueryable(client))
+    } finally {
+      client.release()
     }
   }
 
@@ -62,7 +80,13 @@ class PostgresDatabase extends PostgresQueryable implements Database {
   }
 }
 
-export function createDatabase(config: Pick<DatabaseConfig, 'url'>): Database {
+export function createDatabase(
+  config: Pick<DatabaseConfig, 'requiredMigration' | 'url'>,
+  options: Readonly<{
+    queryTimeoutMs?: number
+    statementTimeoutMs?: number
+  }> = {},
+): Database {
   return new PostgresDatabase(
     new Pool({
       connectionString: config.url.href,
@@ -70,9 +94,10 @@ export function createDatabase(config: Pick<DatabaseConfig, 'url'>): Database {
       idleTimeoutMillis: 30_000,
       max: 10,
       maxLifetimeSeconds: 60 * 30,
-      query_timeout: 6_000,
-      statement_timeout: 5_000,
+      query_timeout: options.queryTimeoutMs ?? 6_000,
+      statement_timeout: options.statementTimeoutMs ?? 5_000,
     }),
+    config.requiredMigration,
   )
 }
 

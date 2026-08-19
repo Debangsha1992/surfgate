@@ -15,6 +15,10 @@ import {
 } from '../repositories/session-repository.js'
 import type { Queryable } from './database.js'
 import { nullableTimestampFromRow, safeIntegerFromRow, timestampFromRow } from './row-values.js'
+import type {
+  SessionReconciliationCandidate,
+  SessionReconciliationRepository,
+} from '../reconciliation/session-reconciler.js'
 
 interface SessionRow extends QueryResultRow {
   id: unknown
@@ -59,7 +63,9 @@ function sessionFromRow(row: SessionRow): Session {
   })
 }
 
-export class PostgresSessionRepository implements SessionRepository {
+export class PostgresSessionRepository
+  implements SessionRepository, SessionReconciliationRepository
+{
   constructor(private readonly database: Queryable) {}
 
   async insertSession(rawSession: Session): Promise<Session> {
@@ -159,6 +165,108 @@ export class PostgresSessionRepository implements SessionRepository {
       throw new SessionNotFoundError()
     }
     return this.resolveConflict(competing, input)
+  }
+
+  async findReconciliationCandidates(
+    input: Readonly<{
+      staleAfterMs: number
+      batchSize: number
+    }>,
+  ): Promise<readonly SessionReconciliationCandidate[]> {
+    if (!Number.isSafeInteger(input.staleAfterMs) || input.staleAfterMs < 1_000) {
+      throw new Error('Session reconciliation age is invalid.')
+    }
+    if (!Number.isSafeInteger(input.batchSize) || input.batchSize < 1 || input.batchSize > 1_000) {
+      throw new Error('Session reconciliation batch size is invalid.')
+    }
+    const rows = await this.database.query<
+      SessionRow & { database_now: unknown; uncertain_allocation: boolean }
+    >(
+      `with reconciliation_clock as materialized (
+         select clock_timestamp() as database_now,
+           clock_timestamp() - ($1::bigint * interval '1 millisecond') as stale_before
+       ), reconciliation_candidates as materialized (
+         (select sessions.tenant_id, sessions.id, sessions.updated_at as priority_at
+          from sessions, reconciliation_clock
+          where status in ('pending', 'routing', 'allocating', 'fallback_allocating')
+            and updated_at <= stale_before
+          order by updated_at, tenant_id, id
+          limit $2)
+         union all
+         (select sessions.tenant_id, sessions.id, sessions.updated_at as priority_at
+          from sessions, reconciliation_clock
+          where status = 'terminating' and updated_at <= stale_before
+          order by updated_at, tenant_id, id
+          limit $2)
+         union all
+         (select sessions.tenant_id, sessions.id, sessions.expires_at as priority_at
+          from sessions, reconciliation_clock
+          where status = 'active' and expires_at <= database_now
+          order by expires_at, updated_at, tenant_id, id
+          limit $2)
+         union all
+         (select sessions.tenant_id, sessions.id, create_claim.lease_expires_at as priority_at
+          from session_create_idempotency create_claim
+          join sessions on sessions.tenant_id = create_claim.tenant_id
+            and sessions.id = create_claim.session_id
+          cross join reconciliation_clock
+          where create_claim.state = 'in_progress'
+            and create_claim.lease_expires_at <= database_now
+            and sessions.status = 'failed'
+            and sessions.updated_at <= stale_before
+          order by create_claim.lease_expires_at, create_claim.tenant_id, create_claim.session_id
+          limit $2)
+       ), selected_candidates as materialized (
+         select tenant_id as selected_tenant_id, id as selected_session_id
+         from reconciliation_candidates
+         order by priority_at, tenant_id, id
+         limit $2
+       )
+       select ${SESSION_COLUMNS}, reconciliation_clock.database_now,
+         (status in ('allocating', 'fallback_allocating') and exists (
+           select 1 from session_allocation_attempts attempt
+           where attempt.tenant_id = sessions.tenant_id
+             and attempt.session_id = sessions.id and attempt.status = 'started'
+         )) as uncertain_allocation
+       from sessions
+       join selected_candidates
+         on selected_candidates.selected_tenant_id = sessions.tenant_id
+         and selected_candidates.selected_session_id = sessions.id
+       cross join reconciliation_clock
+       order by sessions.updated_at, sessions.tenant_id, sessions.id`,
+      [input.staleAfterMs, input.batchSize],
+    )
+    return Object.freeze(
+      rows.map((row) => ({
+        session: sessionFromRow(row),
+        databaseNow: timestampFromRow(row.database_now),
+        uncertainAllocation: row.uncertain_allocation,
+      })),
+    )
+  }
+
+  async finalizeReconciledCreate(
+    input: Readonly<{
+      tenantID: TenantID
+      sessionID: SessionID
+      at: string
+    }>,
+  ): Promise<void> {
+    const tenantID = TenantIDSchema.parse(input.tenantID)
+    const sessionID = SessionIDSchema.parse(input.sessionID)
+    await this.database.query(
+      `update session_create_idempotency
+       set state='failed', http_status=503, error_code='PROVIDER_ALLOCATION_FAILED', updated_at=$3
+       where tenant_id=$1 and session_id=$2 and state='in_progress'`,
+      [tenantID, sessionID, input.at],
+    )
+  }
+
+  async databaseNow(): Promise<string> {
+    const rows = await this.database.query<{ database_now: unknown }>(
+      'select clock_timestamp() as database_now',
+    )
+    return timestampFromRow(rows[0]?.database_now)
   }
 
   private resolveConflict(current: Session, input: TransitionSessionInput): Session {

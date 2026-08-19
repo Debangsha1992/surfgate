@@ -5,6 +5,7 @@ import type { QueryResultRow } from 'pg'
 
 import type { Database, Queryable } from '../src/database/database.js'
 import { createAPIServer } from '../src/server.js'
+import { completeAPIShutdown } from '../src/lifecycle.js'
 
 class FakeDatabase implements Database {
   readonly closeSpy = vi.fn(() => Promise.resolve())
@@ -18,6 +19,10 @@ class FakeDatabase implements Database {
   }
 
   transaction<Result>(operation: (transaction: Queryable) => Promise<Result>): Promise<Result> {
+    return operation(this)
+  }
+
+  connection<Result>(operation: (connection: Queryable) => Promise<Result>): Promise<Result> {
     return operation(this)
   }
 
@@ -81,10 +86,30 @@ describe('API server lifecycle', () => {
       })
 
       const closing = server.close()
+      const closingExpectation = expect(closing).rejects.toThrow(
+        'API shutdown did not complete within its bounded deadline.',
+      )
       await vi.advanceTimersByTimeAsync(5_000)
-      await expect(closing).resolves.toBeUndefined()
+      await closingExpectation
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('forces the process boundary after bounded server shutdown fails', async () => {
+    const forceExit = vi.fn()
+    const warn = vi.fn()
+    const shutdownTelemetry = vi.fn(() => Promise.resolve())
+
+    await completeAPIShutdown({
+      closeServer: () => Promise.reject(new Error('bounded shutdown failed')),
+      shutdownTelemetry,
+      forceExit,
+      warn,
+    })
+
+    expect(warn).toHaveBeenCalledOnce()
+    expect(shutdownTelemetry).toHaveBeenCalledOnce()
+    expect(forceExit).toHaveBeenCalledWith(1)
   })
 })

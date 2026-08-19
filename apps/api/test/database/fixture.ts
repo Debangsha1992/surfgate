@@ -10,7 +10,7 @@ import {
 } from '../../src/database/database.js'
 import { runMigrations } from '../../src/database/migrate.js'
 
-const configuredTestURL = loadConfig().database.testURL
+export const configuredTestURL = loadConfig().database.testURL
 export function describeWithDatabase(name: string, factory: () => void): void {
   if (configuredTestURL === undefined) {
     describe.skip(name, factory)
@@ -26,7 +26,10 @@ beforeAll(async () => {
     return
   }
   assertTestDatabaseURL(configuredTestURL)
-  database = createDatabase({ url: configuredTestURL })
+  database = createDatabase({
+    url: configuredTestURL,
+    requiredMigration: '0014-session-reconciliation-claim-index.sql',
+  })
   await runMigrations(database, fileURLToPath(new URL('../../migrations/', import.meta.url)))
 })
 

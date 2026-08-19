@@ -23,6 +23,7 @@ import type {
   HTTPObservation,
   AuthenticationObservation,
   SessionTransitionObservation,
+  SessionReconciliationObservation,
   ManagedTaskObservation,
   ManagedTaskTelemetry,
   RelayConnectionObservation,
@@ -311,6 +312,7 @@ export function createTelemetryAdapters(
     unit: 'ms',
   })
   const sessionTransitions = input.meter.createCounter('surfgate.session.transitions')
+  const sessionReconciliation = input.meter.createCounter('surfgate.session.reconciliation')
   const activeSessions = input.meter.createUpDownCounter('surfgate.session.active')
   const operationAttempts = input.meter.createCounter('surfgate.operation.attempts')
   const operationDuration = input.meter.createHistogram('surfgate.operation.duration', {
@@ -410,6 +412,12 @@ export function createTelemetryAdapters(
         if (observation.from === 'active' && observation.to !== 'active') activeSessions.add(-1)
       }
       recordSpan('surfgate.session.persist', labels)
+    },
+    recordSessionReconciliation(observation: SessionReconciliationObservation): void {
+      sessionReconciliation.add(
+        Math.max(0, Math.trunc(observation.count)),
+        metricAttributes({ outcome: observation.outcome }),
+      )
     },
     recordRoutingDecision(observation: RoutingDecisionObservation): void {
       const labels = metricAttributes(observation)

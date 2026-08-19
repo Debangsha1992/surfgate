@@ -24,12 +24,15 @@ class Queryable implements TaskQueryable {
   }
 }
 
-export function createTaskDatabase(config: Pick<DatabaseConfig, 'url'>): TaskDatabase {
+export function createTaskDatabase(
+  config: Pick<DatabaseConfig, 'requiredMigration' | 'url'>,
+): TaskDatabase {
   const pool = new Pool({
     connectionString: config.url.href,
     connectionTimeoutMillis: 5_000,
     idleTimeoutMillis: 30_000,
     max: 10,
+    maxLifetimeSeconds: 60 * 30,
     query_timeout: 6_000,
     statement_timeout: 5_000,
   })
@@ -52,8 +55,13 @@ export function createTaskDatabase(config: Pick<DatabaseConfig, 'url'>): TaskDat
     },
     async health(): Promise<'ready' | 'unavailable'> {
       try {
-        await queryable.query('select 1')
-        return 'ready'
+        const rows = await queryable.query<{ compatible: boolean }>(
+          `select exists(
+             select 1 from surfgate_migrations where name = $1
+           ) as compatible`,
+          [config.requiredMigration],
+        )
+        return rows[0]?.compatible === true ? 'ready' : 'unavailable'
       } catch {
         return 'unavailable'
       }

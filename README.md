@@ -152,6 +152,10 @@ pnpm --filter @surfgate/router test:golden
 pnpm test:relay-load
 pnpm test:tasks
 pnpm test:observability
+pnpm test:production-hardening
+pnpm test:capacity
+pnpm test:recovery
+pnpm release:check
 ```
 
 Integration tests require Redis and an isolated PostgreSQL database whose name ends in `_test`. Create the local test database once and run the suite with:
@@ -194,7 +198,7 @@ The worker exposes the same liveness/readiness split on its configured health po
 - Drain a relay instance through its normal `SIGTERM`/`SIGINT` shutdown path; the configured drain timeout bounds graceful client/upstream closure before hard cleanup.
 - Treat PostgreSQL and Redis readiness failures as authorization-safety failures. Restore the dependency before accepting new relay connections rather than bypassing the check.
 - Investigate `UPSTREAM_CONNECT_FAILED` using provider health and server-side Cloudflare configuration. SurfGate deliberately omits upstream response bodies, authorization headers, and provider URLs from client errors and logs.
-- Rotate `SURFGATE_RELAY_TOKEN_SIGNING_KEY` together with `SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID` as a coordinated deployment. Existing short-lived credentials become invalid when the old key is removed, so schedule rotation around the configured token TTL (maximum five minutes).
+- Rotate `SURFGATE_RELAY_TOKEN_SIGNING_KEY` together with its key ID and retain the old pair temporarily in `SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY{,_ID}`. Existing short-lived credentials remain valid during the bounded overlap; remove the previous key after the maximum five-minute token TTL plus rollout skew.
 - Keep provider-session encryption-key rotation separate from relay-token signing-key rotation; neither key may be reused for the other purpose.
 - Use [operations/observability.md](operations/observability.md) for telemetry taxonomy, health semantics, proposed internal SLOs, alerts, and dashboard requirements. Incident procedures are in [operations/runbooks.md](operations/runbooks.md).
 
@@ -240,4 +244,16 @@ Raw CDP frames, page content, cookies, relay tokens, and provider URLs are never
 
 The control plane validates a requested `targetUrl`, but the current Cloudflare allocation API creates a browser session without asking SurfGate to perform that navigation. Once an authenticated client controls the transparent CDP relay, commands such as `Page.navigate`, script-driven navigation, popups, and browser subresource requests are resolved inside the provider browser. SurfGate currently cannot pin that browser's DNS socket or inspect every provider-side redirect, so the URL policy and redirect-chain helper must not be interpreted as complete SSRF isolation for arbitrary raw CDP activity.
 
-Only trusted tenant principals should receive API keys and relay credentials. Deployments requiring untrusted raw-CDP users need an egress policy or provider/browser request-interception layer that independently enforces allowed destinations. That enforcement is deliberately not claimed by the current milestone.
+Raw CDP is therefore disabled by default when `NODE_ENV=production`. Set `SURFGATE_RAW_CDP_ACCESS=trusted` only when relay access is restricted to explicitly trusted principals and the deployment/provider supplies an independent egress boundary. Managed tasks remain available while raw CDP is disabled. This is an explicit conditional production trust boundary, not a claim of complete SSRF containment.
+
+## Production and recovery
+
+API, relay, and worker have independent hardened multi-stage container builds under their application directories. Run migrations as a separate one-shot job before rollout; ordinary service startup never changes schema. Readiness verifies the required migration rather than only checking that PostgreSQL accepts a connection.
+
+Stale/expired session lifecycle recovery is a private bounded job:
+
+```bash
+pnpm --filter @surfgate/api reconcile:sessions
+```
+
+See [production readiness](operations/production-readiness.md), [deployment](operations/deployment.md), [recovery](operations/recovery.md), the [dependency failure matrix](operations/failure-matrix.md), and [capacity/limits](operations/capacity-and-limits.md). The current assessment is **CONDITIONAL GO**: production is supportable with raw CDP disabled or trusted-only behind independent egress controls and after the documented release/restore gates pass.

@@ -41,11 +41,16 @@ export interface APIServer {
 type ListenOptions = Readonly<{ host: string; port: number }>
 const SHUTDOWN_TIMEOUT_MS = 5_000
 
-async function settleWithin(operation: Promise<void>): Promise<'completed' | 'timed_out'> {
+async function settleWithin(
+  operation: Promise<void>,
+): Promise<'completed' | 'failed' | 'timed_out'> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
-      operation.then(() => 'completed' as const).catch(() => 'completed' as const),
+      operation.then(
+        () => 'completed' as const,
+        () => 'failed' as const,
+      ),
       new Promise<'timed_out'>((resolve) => {
         timer = setTimeout(() => resolve('timed_out'), SHUTDOWN_TIMEOUT_MS)
       }),
@@ -101,10 +106,13 @@ export function createAPIServer(
     config: config.controlPlane,
     telemetry,
     relay: {
-      tokens: createRelayTokenService(relaySigning),
+      tokens: createRelayTokenService(relaySigning, {
+        verificationKeys: relaySigning.verificationKeys,
+      }),
       authorization: redis,
       publicURL: config.relay.publicURL,
       tokenTTLSeconds: config.relay.tokenTTLSeconds,
+      rawCDPAccess: config.security.rawCDPAccess,
     },
   })
   const taskRepository = new PostgresManagedTaskRepository(database)
@@ -160,27 +168,36 @@ export function createAPIServer(
     },
     close(): Promise<void> {
       closePromise ??= (async () => {
+        let shutdownIncomplete = false
         app.log.info({ event: 'api.shutdown' }, 'SurfGate API stopping')
         try {
           if (startPromise !== undefined) {
             await startPromise.catch(() => undefined)
           }
           const appClose = await settleWithin(app.close())
-          if (appClose === 'timed_out') {
-            app.log.warn({ event: 'api.shutdown.drain_timeout' }, 'API drain deadline reached')
+          if (appClose !== 'completed') {
+            shutdownIncomplete = true
+            app.log.warn(
+              { event: 'api.shutdown.drain_timeout' },
+              'API drain failed or reached its deadline',
+            )
           }
         } finally {
           const dependencies = await Promise.all([
             settleWithin(database.close()),
             settleWithin(redis.close()),
           ])
-          if (dependencies.includes('timed_out')) {
+          if (dependencies.some((result) => result !== 'completed')) {
+            shutdownIncomplete = true
             app.log.warn(
               { event: 'api.shutdown.dependency_timeout' },
               'API dependency shutdown deadline reached',
             )
           }
           app.log.info({ event: 'api.shutdown.complete' }, 'SurfGate API stopped')
+        }
+        if (shutdownIncomplete) {
+          throw new Error('API shutdown did not complete within its bounded deadline.')
         }
       })()
       return closePromise

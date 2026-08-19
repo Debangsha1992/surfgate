@@ -67,17 +67,38 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run quality gate
-        run: pnpm check
+      - name: Run deterministic release gate
+        run: pnpm release:check
 
-      - name: Run adversarial security regression
-        run: pnpm test:security
+      - name: Run developer-safe capacity regression
+        run: pnpm test:capacity
 
-      - name: Run managed-task regression
-        run: pnpm test:tasks
+      - name: Build production service images
+        run: |
+          docker build -f apps/api/Dockerfile -t surfgate-api:${{ github.sha }} .
+          docker build -f apps/relay/Dockerfile -t surfgate-relay:${{ github.sha }} .
+          docker build -f apps/worker/Dockerfile -t surfgate-worker:${{ github.sha }} .
 
-      - name: Run observability regression
-        run: pnpm test:observability
+      - name: Verify production image identity and runtime payloads
+        run: |
+          test "$(docker image inspect surfgate-api:${{ github.sha }} --format '{{.Config.User}}')" = "10001:10001"
+          test "$(docker image inspect surfgate-relay:${{ github.sha }} --format '{{.Config.User}}')" = "10001:10001"
+          test "$(docker image inspect surfgate-worker:${{ github.sha }} --format '{{.Config.User}}')" = "10001:10001"
+          docker run --rm --entrypoint node surfgate-api:${{ github.sha }} -e "for (const f of ['dist/main.js','dist/database/migrate.js','dist/reconcile.js','migrations/0014-session-reconciliation-claim-index.sql']) if (!require('node:fs').existsSync(f)) process.exit(1)"
+          docker run --rm --entrypoint node surfgate-relay:${{ github.sha }} -e "if (!require('node:fs').existsSync('dist/main.js')) process.exit(1)"
+          docker run --rm --entrypoint node surfgate-worker:${{ github.sha }} -e "if (!require('node:fs').existsSync('dist/main.js')) process.exit(1)"
 
-      - name: Run database and Redis integration regressions
-        run: pnpm test:integration
+      - name: Verify least-privilege operational command configuration
+        run: |
+          docker run --rm --entrypoint node \
+            -e NODE_ENV=production \
+            -e 'DATABASE_URL=postgresql://migrator@database.surfgate.example/surfgate?sslmode=verify-full' \
+            surfgate-api:${{ github.sha }} dist/database/migrate.js --validate-config
+          docker run --rm --entrypoint node \
+            -e NODE_ENV=production \
+            -e 'DATABASE_URL=postgresql://reconciler@database.surfgate.example/surfgate?sslmode=verify-full' \
+            -e CLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef \
+            -e CLOUDFLARE_BROWSER_RUN_API_TOKEN=synthetic-ci-provider-token \
+            -e SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY=L2yYby+FsEILUGxBK+oZJdKcSCfUpjYgQfADBuTLOFw= \
+            -e SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY_ID=provider-session-v1 \
+            surfgate-api:${{ github.sha }} dist/reconcile.js --validate-config

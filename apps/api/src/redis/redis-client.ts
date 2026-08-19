@@ -13,16 +13,20 @@ return count
 `
 const COMMAND_TIMEOUT_MS = 5_000
 
-async function bounded<Result>(operation: Promise<Result>): Promise<Result> {
+function destroyIfOpen(client: Readonly<{ isOpen: boolean; destroy(): void }>): void {
+  if (client.isOpen) client.destroy()
+}
+
+async function bounded<Result>(operation: Promise<Result>, onTimeout: () => void): Promise<Result> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       operation,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error('Redis operation timed out.')),
-          COMMAND_TIMEOUT_MS,
-        )
+        timer = setTimeout(() => {
+          onTimeout()
+          reject(new Error('Redis operation timed out.'))
+        }, COMMAND_TIMEOUT_MS)
       }),
     ])
   } finally {
@@ -48,7 +52,7 @@ export function createRedisRateLimitStore(config: RedisConfig): ControlPlaneRedi
     connection ??= client.connect().finally(() => {
       connection = undefined
     })
-    await connection
+    await bounded(connection, () => destroyIfOpen(client))
   }
   return Object.freeze({
     async increment(key: string, windowMs: number): Promise<number> {
@@ -58,6 +62,7 @@ export function createRedisRateLimitStore(config: RedisConfig): ControlPlaneRedi
           keys: [key],
           arguments: [String(windowMs)],
         }),
+        () => destroyIfOpen(client),
       )
       if (typeof result !== 'number') throw new Error('Redis returned an invalid rate-limit value.')
       return result
@@ -65,7 +70,9 @@ export function createRedisRateLimitStore(config: RedisConfig): ControlPlaneRedi
     async health(): Promise<'ready' | 'unavailable'> {
       try {
         await ensureConnected()
-        return (await bounded(client.ping())) === 'PONG' ? 'ready' : 'unavailable'
+        return (await bounded(client.ping(), () => destroyIfOpen(client))) === 'PONG'
+          ? 'ready'
+          : 'unavailable'
       } catch {
         return 'unavailable'
       }
@@ -74,7 +81,11 @@ export function createRedisRateLimitStore(config: RedisConfig): ControlPlaneRedi
       const tenantID = TenantIDSchema.parse(rawTenantID)
       const sessionID = SessionIDSchema.parse(rawSessionID)
       await ensureConnected()
-      return (await bounded(client.exists(revocationKey(tenantID, sessionID)))) === 1
+      return (
+        (await bounded(client.exists(revocationKey(tenantID, sessionID)), () =>
+          destroyIfOpen(client),
+        )) === 1
+      )
     },
     async revokeSession(
       input: Readonly<{ tenantID: TenantID; sessionID: SessionID; ttlSeconds: number }>,
@@ -84,17 +95,18 @@ export function createRedisRateLimitStore(config: RedisConfig): ControlPlaneRedi
       const ttlSeconds = Math.max(1, Math.min(86_400, Math.floor(input.ttlSeconds)))
       await ensureConnected()
       const key = revocationKey(tenantID, sessionID)
-      await bounded(client.set(key, '1', { EX: ttlSeconds }))
+      await bounded(client.set(key, '1', { EX: ttlSeconds }), () => destroyIfOpen(client))
       await bounded(
         client.publish('surfgate:relay:revocations:v1', JSON.stringify({ tenantID, sessionID })),
+        () => destroyIfOpen(client),
       )
     },
     async close(): Promise<void> {
       if (!client.isOpen) return
       try {
-        await bounded(client.quit())
+        await bounded(client.quit(), () => destroyIfOpen(client))
       } catch {
-        client.destroy()
+        destroyIfOpen(client)
       }
     },
   })

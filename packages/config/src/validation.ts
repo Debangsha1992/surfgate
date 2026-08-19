@@ -1,20 +1,140 @@
 import { ConfigurationError, type ConfigurationIssue } from './configuration-error.js'
 import type {
   CloudflareCredentials,
+  DatabaseMigrationConfig,
   EnvironmentSource,
   LogLevel,
   ObjectStorageCredentials,
   ProviderSessionEncryptionConfig,
+  ReconciliationConfig,
+  RelayServiceConfig,
   RelayTokenSigningConfig,
   RuntimeEnvironment,
+  SymmetricKeyConfig,
   SurfGateConfig,
+  WorkerServiceConfig,
 } from './types.js'
 
 const RUNTIME_ENVIRONMENTS = ['development', 'test', 'production'] as const
 const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const
-const POSTGRES_TLS_MODES = ['require', 'verify-ca', 'verify-full'] as const
 const BASE64_32_BYTE_KEY_PATTERN = /^[A-Za-z0-9+/]{43}=$/u
 const KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u
+const REQUIRED_DATABASE_MIGRATION = '0014-session-reconciliation-claim-index.sql'
+
+function isLocalConfigurationHost(hostname: string): boolean {
+  const normalizedHostname = hostname.toLowerCase().replace(/\.$/u, '')
+  const normalized =
+    normalizedHostname.startsWith('[') && normalizedHostname.endsWith(']')
+      ? normalizedHostname.slice(1, -1)
+      : normalizedHostname
+  return (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized === '0.0.0.0' ||
+    normalized === '::' ||
+    normalized === '::1' ||
+    normalized === '::ffff:0:0' ||
+    /^::ffff:7f[0-9a-f]{2}:/u.test(normalized) ||
+    normalized.startsWith('127.')
+  )
+}
+
+function rejectLocalProductionURL(
+  url: URL | undefined,
+  key: string,
+  runtimeEnvironment: RuntimeEnvironment,
+  issues: ConfigurationIssue[],
+): void {
+  if (
+    runtimeEnvironment === 'production' &&
+    url !== undefined &&
+    isLocalConfigurationHost(url.hostname)
+  ) {
+    issues.push({ key, message: 'must not use a local development host in production' })
+  }
+}
+
+function isObviousDevelopmentKey(key: Buffer): boolean {
+  return key.every((byte) => byte === key[0])
+}
+
+function symmetricKey(
+  environment: EnvironmentSource,
+  keyName: string,
+  keyIDName: string,
+  options: Readonly<{
+    required: boolean
+    rejectDevelopmentKey: boolean
+    requireExplicitID: boolean
+  }>,
+  issues: ConfigurationIssue[],
+): SymmetricKeyConfig | undefined {
+  const encodedKey = optionalSecret(environment, keyName)
+  const configuredKeyID = optionalString(environment, keyIDName)
+  if (encodedKey === undefined) {
+    if (options.required) issues.push({ key: keyName, message: 'is required in production' })
+    if (configuredKeyID !== undefined) {
+      issues.push({ key: keyName, message: `is required when ${keyIDName} is set` })
+    }
+    return undefined
+  }
+  if (options.requireExplicitID && configuredKeyID === undefined) {
+    issues.push({ key: keyIDName, message: `is required when ${keyName} is set` })
+  }
+  if (!BASE64_32_BYTE_KEY_PATTERN.test(encodedKey)) {
+    issues.push({ key: keyName, message: 'must be a base64-encoded 32-byte key' })
+    return undefined
+  }
+  const decodedKey = Buffer.from(encodedKey, 'base64')
+  if (decodedKey.byteLength !== 32 || decodedKey.toString('base64') !== encodedKey) {
+    issues.push({ key: keyName, message: 'must be a base64-encoded 32-byte key' })
+    return undefined
+  }
+  if (options.rejectDevelopmentKey && isObviousDevelopmentKey(decodedKey)) {
+    issues.push({ key: keyName, message: 'must not use obvious development key material' })
+    return undefined
+  }
+  const keyID = configuredKeyID ?? 'v1'
+  if (!KEY_ID_PATTERN.test(keyID)) {
+    issues.push({ key: keyIDName, message: 'must be a safe key identifier' })
+    return undefined
+  }
+  return Object.freeze({ key: createSecretKey(decodedKey), keyID })
+}
+
+function previousSymmetricKey(
+  environment: EnvironmentSource,
+  keyName: string,
+  keyIDName: string,
+  current: SymmetricKeyConfig | undefined,
+  runtimeEnvironment: RuntimeEnvironment,
+  issues: ConfigurationIssue[],
+): readonly SymmetricKeyConfig[] {
+  const previous = symmetricKey(
+    environment,
+    keyName,
+    keyIDName,
+    {
+      required: false,
+      rejectDevelopmentKey: runtimeEnvironment === 'production',
+      requireExplicitID: true,
+    },
+    issues,
+  )
+  if (previous === undefined) return Object.freeze([])
+  if (current?.keyID === previous.keyID) {
+    issues.push({ key: keyIDName, message: 'must differ from the current key identifier' })
+    return Object.freeze([])
+  }
+  if (
+    current !== undefined &&
+    Buffer.from(current.key.export()).equals(Buffer.from(previous.key.export()))
+  ) {
+    issues.push({ key: keyName, message: 'must differ from the current key material' })
+    return Object.freeze([])
+  }
+  return Object.freeze([previous])
+}
 
 function optionalString(environment: EnvironmentSource, key: string): string | undefined {
   const value = environment[key]?.trim()
@@ -215,11 +335,19 @@ function objectStorageCredentials(
 
 function cloudflareCredentials(
   environment: EnvironmentSource,
+  runtimeEnvironment: RuntimeEnvironment,
   issues: ConfigurationIssue[],
 ): CloudflareCredentials | undefined {
   const accountID = optionalString(environment, 'CLOUDFLARE_ACCOUNT_ID')
   const browserRunAPIToken = optionalSecret(environment, 'CLOUDFLARE_BROWSER_RUN_API_TOKEN')
   if (accountID === undefined && browserRunAPIToken === undefined) {
+    if (runtimeEnvironment === 'production') {
+      issues.push({ key: 'CLOUDFLARE_ACCOUNT_ID', message: 'is required in production' })
+      issues.push({
+        key: 'CLOUDFLARE_BROWSER_RUN_API_TOKEN',
+        message: 'is required in production',
+      })
+    }
     return undefined
   }
   if (accountID === undefined) {
@@ -279,68 +407,54 @@ function providerSessionEncryption(
   runtimeEnvironment: RuntimeEnvironment,
   issues: ConfigurationIssue[],
 ): ProviderSessionEncryptionConfig | undefined {
-  const keyName = 'SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY'
-  const encodedKey = optionalSecret(environment, keyName)
-  if (encodedKey === undefined) {
-    if (runtimeEnvironment === 'production') {
-      issues.push({ key: keyName, message: 'is required in production' })
-    }
-    return undefined
-  }
-
-  if (!BASE64_32_BYTE_KEY_PATTERN.test(encodedKey)) {
-    issues.push({ key: keyName, message: 'must be a base64-encoded 32-byte key' })
-    return undefined
-  }
-  const decodedKey = Buffer.from(encodedKey, 'base64')
-  if (decodedKey.byteLength !== 32 || decodedKey.toString('base64') !== encodedKey) {
-    issues.push({ key: keyName, message: 'must be a base64-encoded 32-byte key' })
-    return undefined
-  }
-
-  const keyID = optionalString(environment, 'SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY_ID') ?? 'v1'
-  if (!KEY_ID_PATTERN.test(keyID)) {
-    issues.push({
-      key: 'SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY_ID',
-      message: 'must be a safe key identifier',
-    })
-    return undefined
-  }
-
-  return Object.freeze({ key: createSecretKey(decodedKey), keyID })
+  const current = symmetricKey(
+    environment,
+    'SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY',
+    'SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY_ID',
+    {
+      required: runtimeEnvironment === 'production',
+      rejectDevelopmentKey: runtimeEnvironment === 'production',
+      requireExplicitID: runtimeEnvironment === 'production',
+    },
+    issues,
+  )
+  const decryptionKeys = previousSymmetricKey(
+    environment,
+    'SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY',
+    'SURFGATE_PROVIDER_SESSION_ENCRYPTION_PREVIOUS_KEY_ID',
+    current,
+    runtimeEnvironment,
+    issues,
+  )
+  return current === undefined ? undefined : Object.freeze({ ...current, decryptionKeys })
 }
 
 function relayTokenSigning(
   environment: EnvironmentSource,
   runtimeEnvironment: RuntimeEnvironment,
   issues: ConfigurationIssue[],
+  requiredInProduction = true,
 ): RelayTokenSigningConfig | undefined {
-  const keyName = 'SURFGATE_RELAY_TOKEN_SIGNING_KEY'
-  const encodedKey = optionalSecret(environment, keyName)
-  if (encodedKey === undefined) {
-    if (runtimeEnvironment === 'production') {
-      issues.push({ key: keyName, message: 'is required in production' })
-    }
-    return undefined
-  }
-  if (!BASE64_32_BYTE_KEY_PATTERN.test(encodedKey)) {
-    issues.push({ key: keyName, message: 'must be a base64-encoded 32-byte key' })
-    return undefined
-  }
-  const decodedKey = Buffer.from(encodedKey, 'base64')
-  if (decodedKey.byteLength !== 32 || decodedKey.toString('base64') !== encodedKey) {
-    issues.push({ key: keyName, message: 'must be a base64-encoded 32-byte key' })
-    return undefined
-  }
-  const keyID = optionalString(environment, 'SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID') ?? 'v1'
-  if (!KEY_ID_PATTERN.test(keyID)) {
-    issues.push({
-      key: 'SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID',
-      message: 'must be a safe key identifier',
-    })
-    return undefined
-  }
-  return Object.freeze({ key: createSecretKey(decodedKey), keyID })
+  const current = symmetricKey(
+    environment,
+    'SURFGATE_RELAY_TOKEN_SIGNING_KEY',
+    'SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID',
+    {
+      required: requiredInProduction && runtimeEnvironment === 'production',
+      rejectDevelopmentKey: runtimeEnvironment === 'production',
+      requireExplicitID: runtimeEnvironment === 'production',
+    },
+    issues,
+  )
+  const verificationKeys = previousSymmetricKey(
+    environment,
+    'SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY',
+    'SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY_ID',
+    current,
+    runtimeEnvironment,
+    issues,
+  )
+  return current === undefined ? undefined : Object.freeze({ ...current, verificationKeys })
 }
 
 function requireProductionPostgresTLS(
@@ -348,15 +462,108 @@ function requireProductionPostgresTLS(
   environment: RuntimeEnvironment,
   issues: ConfigurationIssue[],
 ): void {
-  if (
-    environment === 'production' &&
-    !(POSTGRES_TLS_MODES as readonly string[]).includes(url.searchParams.get('sslmode') ?? '')
-  ) {
-    issues.push({ key: 'DATABASE_URL', message: 'must require TLS in production' })
+  if (environment !== 'production') return
+  const sslModes = url.searchParams.getAll('sslmode')
+  const ambiguousTLSParameters =
+    url.searchParams.has('ssl') || url.searchParams.has('uselibpqcompat')
+  if (sslModes.length !== 1 || sslModes[0] !== 'verify-full' || ambiguousTLSParameters) {
+    issues.push({
+      key: 'DATABASE_URL',
+      message: 'must use one unambiguous sslmode=verify-full in production',
+    })
   }
 }
 
-export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
+function rejectPostgresAuthorityOverrides(
+  url: URL,
+  key: 'DATABASE_URL' | 'TEST_DATABASE_URL',
+  issues: ConfigurationIssue[],
+): void {
+  const authorityOverride = ['host', 'port', 'user', 'password', 'database', 'dbname'].some(
+    (parameter) => url.searchParams.has(parameter),
+  )
+  if (authorityOverride) {
+    issues.push({
+      key,
+      message: 'must define connection authority only in the URL authority component',
+    })
+  }
+}
+
+export function parseDatabaseMigrationConfig(
+  environment: EnvironmentSource,
+): DatabaseMigrationConfig {
+  const issues: ConfigurationIssue[] = []
+  const runtimeEnvironment = choice(
+    environment,
+    'NODE_ENV',
+    RUNTIME_ENVIRONMENTS,
+    'development',
+    issues,
+  ) satisfies RuntimeEnvironment
+  const databaseURL = requiredURL(
+    environment,
+    'DATABASE_URL',
+    ['postgres:', 'postgresql:'],
+    new URL('postgresql://invalid.invalid/surfgate'),
+    issues,
+  )
+  rejectPostgresAuthorityOverrides(databaseURL, 'DATABASE_URL', issues)
+  requireProductionPostgresTLS(databaseURL, runtimeEnvironment, issues)
+  rejectLocalProductionURL(databaseURL, 'DATABASE_URL', runtimeEnvironment, issues)
+  const testDatabaseURL = optionalURL(
+    environment,
+    'TEST_DATABASE_URL',
+    ['postgres:', 'postgresql:'],
+    new URL('postgresql://invalid.invalid/surfgate_test'),
+    issues,
+  )
+  if (testDatabaseURL !== undefined) {
+    rejectPostgresAuthorityOverrides(testDatabaseURL, 'TEST_DATABASE_URL', issues)
+  }
+  if (issues.length > 0) throw new ConfigurationError(issues)
+  return Object.freeze({
+    database: Object.freeze({
+      url: databaseURL,
+      testURL: testDatabaseURL,
+      requiredMigration: REQUIRED_DATABASE_MIGRATION,
+    }),
+  })
+}
+
+function parseSurfGateConfig(
+  sourceEnvironment: EnvironmentSource,
+  scope: 'full' | 'reconciler' | 'relay' | 'worker',
+): SurfGateConfig {
+  const withoutObjectStorage = scope === 'reconciler' || scope === 'relay'
+  const withoutRelayDependencies = scope === 'reconciler' || scope === 'worker'
+  const environment: EnvironmentSource =
+    scope === 'full'
+      ? sourceEnvironment
+      : {
+          ...sourceEnvironment,
+          ...(withoutObjectStorage
+            ? {
+                AWS_ACCESS_KEY_ID: undefined,
+                AWS_SECRET_ACCESS_KEY: undefined,
+                S3_BUCKET: 'unused-component',
+                S3_ENDPOINT: 'https://unused.invalid',
+                S3_REGION: 'unused',
+                S3_ACCESS_KEY_ID: undefined,
+                S3_SECRET_ACCESS_KEY: undefined,
+              }
+            : {}),
+          ...(withoutRelayDependencies
+            ? {
+                REDIS_URL: 'rediss://unused.invalid',
+                SURFGATE_RELAY_PUBLIC_URL: 'wss://unused.invalid',
+                SURFGATE_RELAY_TOKEN_SIGNING_KEY: undefined,
+                SURFGATE_RELAY_TOKEN_SIGNING_KEY_ID: undefined,
+                SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY: undefined,
+                SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY_ID: undefined,
+              }
+            : {}),
+        }
   const issues: ConfigurationIssue[] = []
   const runtime = Object.freeze({
     environment: choice(
@@ -463,16 +670,23 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
     new URL('postgresql://invalid.invalid/surfgate'),
     issues,
   )
+  rejectPostgresAuthorityOverrides(databaseURL, 'DATABASE_URL', issues)
   requireProductionPostgresTLS(databaseURL, runtime.environment, issues)
+  rejectLocalProductionURL(databaseURL, 'DATABASE_URL', runtime.environment, issues)
+  const testDatabaseURL = optionalURL(
+    environment,
+    'TEST_DATABASE_URL',
+    ['postgres:', 'postgresql:'],
+    new URL('postgresql://invalid.invalid/surfgate_test'),
+    issues,
+  )
+  if (testDatabaseURL !== undefined) {
+    rejectPostgresAuthorityOverrides(testDatabaseURL, 'TEST_DATABASE_URL', issues)
+  }
   const database = Object.freeze({
     url: databaseURL,
-    testURL: optionalURL(
-      environment,
-      'TEST_DATABASE_URL',
-      ['postgres:', 'postgresql:'],
-      new URL('postgresql://invalid.invalid/surfgate_test'),
-      issues,
-    ),
+    requiredMigration: REQUIRED_DATABASE_MIGRATION,
+    testURL: testDatabaseURL,
   })
   const redis = Object.freeze({
     url: requiredURL(
@@ -483,6 +697,7 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
       issues,
     ),
   })
+  rejectLocalProductionURL(redis.url, 'REDIS_URL', runtime.environment, issues)
   const objectStorage = Object.freeze({
     region: requiredString(environment, 'S3_REGION', issues),
     bucket: requiredString(environment, 'S3_BUCKET', issues),
@@ -495,6 +710,7 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
     ),
     credentials: objectStorageCredentials(environment, issues),
   })
+  rejectLocalProductionURL(objectStorage.endpoint, 'S3_ENDPOINT', runtime.environment, issues)
   const telemetry = Object.freeze({
     serviceName: optionalString(environment, 'OTEL_SERVICE_NAME') ?? 'surfgate',
     endpoint: telemetryEndpoint(environment, secureTransportRequired, issues),
@@ -547,6 +763,12 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
       issues,
     ),
   })
+  rejectLocalProductionURL(
+    telemetry.endpoint,
+    'OTEL_EXPORTER_OTLP_ENDPOINT',
+    runtime.environment,
+    issues,
+  )
   if (telemetry.maxExportBatchSize > telemetry.maxQueueSize) {
     issues.push({
       key: 'SURFGATE_OTEL_MAX_EXPORT_BATCH_SIZE',
@@ -561,12 +783,46 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
   }
   const cloudflare = Object.freeze({
     apiBaseURL: cloudflareAPIBaseURL(environment, issues),
-    credentials: cloudflareCredentials(environment, issues),
+    credentials: cloudflareCredentials(environment, runtime.environment, issues),
   })
   const security = Object.freeze({
     providerSessionEncryption: providerSessionEncryption(environment, runtime.environment, issues),
-    relayTokenSigning: relayTokenSigning(environment, runtime.environment, issues),
+    relayTokenSigning: relayTokenSigning(
+      environment,
+      runtime.environment,
+      issues,
+      scope === 'full' || scope === 'relay',
+    ),
+    rawCDPAccess: choice(
+      environment,
+      'SURFGATE_RAW_CDP_ACCESS',
+      ['disabled', 'trusted'] as const,
+      runtime.environment === 'production' ? 'disabled' : 'trusted',
+      issues,
+    ),
   })
+  if (
+    runtime.environment === 'production' &&
+    security.providerSessionEncryption !== undefined &&
+    security.relayTokenSigning !== undefined
+  ) {
+    const encryptionKeys = [
+      security.providerSessionEncryption,
+      ...security.providerSessionEncryption.decryptionKeys,
+    ]
+    const signingKeys = [security.relayTokenSigning, ...security.relayTokenSigning.verificationKeys]
+    const reusesKeyMaterial = encryptionKeys.some((encryptionKey) =>
+      signingKeys.some((signingKey) =>
+        Buffer.from(encryptionKey.key.export()).equals(Buffer.from(signingKey.key.export())),
+      ),
+    )
+    if (reusesKeyMaterial) {
+      issues.push({
+        key: 'SURFGATE_RELAY_TOKEN_SIGNING_KEY',
+        message: 'must be independent from all provider-session encryption material',
+      })
+    }
+  }
   const controlPlane = Object.freeze({
     healthTimeoutMs: boundedInteger(
       environment,
@@ -600,6 +856,22 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
       600_000,
       issues,
     ),
+    reconciliationStaleAfterMs: boundedInteger(
+      environment,
+      'SURFGATE_RECONCILIATION_STALE_AFTER_MS',
+      120_000,
+      30_000,
+      86_400_000,
+      issues,
+    ),
+    reconciliationBatchSize: boundedInteger(
+      environment,
+      'SURFGATE_RECONCILIATION_BATCH_SIZE',
+      100,
+      1,
+      1_000,
+      issues,
+    ),
     quotas: Object.freeze({
       requestsPerMinute: boundedInteger(
         environment,
@@ -627,6 +899,17 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
       ),
     }),
   })
+  const minimumReconciliationStaleAfterMs =
+    Math.max(
+      controlPlane.healthTimeoutMs * 2 + controlPlane.allocationTimeoutMs * 2,
+      controlPlane.terminationTimeoutMs,
+    ) + 30_000
+  if (controlPlane.reconciliationStaleAfterMs < minimumReconciliationStaleAfterMs) {
+    issues.push({
+      key: 'SURFGATE_RECONCILIATION_STALE_AFTER_MS',
+      message: `must be at least ${minimumReconciliationStaleAfterMs} milliseconds for configured provider deadlines`,
+    })
+  }
   const tasks = Object.freeze({
     requestsPerMinute: boundedInteger(
       environment,
@@ -754,6 +1037,49 @@ export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
     cloudflare,
     security,
     controlPlane,
+  })
+}
+
+export function parseConfig(environment: EnvironmentSource): SurfGateConfig {
+  return parseSurfGateConfig(environment, 'full')
+}
+
+export function parseReconciliationConfig(environment: EnvironmentSource): ReconciliationConfig {
+  const config = parseSurfGateConfig(environment, 'reconciler')
+  return Object.freeze({
+    cloudflare: config.cloudflare,
+    controlPlane: config.controlPlane,
+    database: config.database,
+    runtime: config.runtime,
+    security: config.security,
+    telemetry: config.telemetry,
+  })
+}
+
+export function parseRelayConfig(environment: EnvironmentSource): RelayServiceConfig {
+  const config = parseSurfGateConfig(environment, 'relay')
+  return Object.freeze({
+    cloudflare: config.cloudflare,
+    database: config.database,
+    redis: config.redis,
+    relay: config.relay,
+    runtime: config.runtime,
+    security: config.security,
+    telemetry: config.telemetry,
+  })
+}
+
+export function parseWorkerConfig(environment: EnvironmentSource): WorkerServiceConfig {
+  const config = parseSurfGateConfig(environment, 'worker')
+  return Object.freeze({
+    cloudflare: config.cloudflare,
+    database: config.database,
+    objectStorage: config.objectStorage,
+    runtime: config.runtime,
+    security: config.security,
+    tasks: config.tasks,
+    telemetry: config.telemetry,
+    worker: config.worker,
   })
 }
 import { createSecretKey } from 'node:crypto'

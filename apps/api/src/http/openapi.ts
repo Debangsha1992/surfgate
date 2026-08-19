@@ -116,7 +116,8 @@ export function buildOpenAPIDocument(): Readonly<Record<string, unknown>> {
           parameters: [{ name: 'sessionId', in: 'path', required: true, schema: sessionIDSchema }],
           responses: {
             200: {
-              description: 'Short-lived SurfGate relay credential for an active session',
+              description:
+                'Short-lived SurfGate relay credential for an active session. Production may disable raw CDP or restrict it to a trusted-principal deployment.',
               content: { 'application/json': { schema: RelayTokenResponseSchema.toJSONSchema() } },
             },
             ...errorResponses(RELAY_TOKEN_ERROR_STATUSES),
