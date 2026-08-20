@@ -16,3 +16,21 @@ test('reports the operation and configured duration when an HTTP request times o
     globalThis.fetch = originalFetch
   }
 })
+
+test('preserves caller cancellation', async () => {
+  const originalFetch = globalThis.fetch
+  const controller = new AbortController()
+  globalThis.fetch = async (_input, init) => {
+    controller.abort(new Error('cancelled by caller'))
+    if (!init.signal.aborted) throw new Error('caller signal was not preserved')
+    throw init.signal.reason
+  }
+  try {
+    await assert.rejects(
+      request('Session creation', 'https://example.com/', { signal: controller.signal }),
+      /cancelled by caller/u,
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
