@@ -25,6 +25,7 @@
     "test:integration": "turbo test:integration --cache-dir=.cache/turbo",
     "test:conformance": "turbo test:conformance --cache-dir=.cache/turbo",
     "test:relay-load": "pnpm --filter @surfgate/relay test:load",
+    "test:examples": "node --test examples/request.test.mjs",
     "test:tasks": "pnpm --filter @surfgate/contracts test && pnpm --filter @surfgate/config test && pnpm --filter @surfgate/task-core test && pnpm --filter @surfgate/object-storage test && pnpm --filter @surfgate/api test -- task && pnpm --filter @surfgate/worker test",
     "test:security": "pnpm --filter @surfgate/security test:security && pnpm --filter @surfgate/api test:security && pnpm --filter @surfgate/relay test:security",
     "test:observability": "pnpm --filter @surfgate/observability test && pnpm --filter @surfgate/worker test -- health-server",
@@ -33,11 +34,12 @@
     "test:capacity": "pnpm --filter @surfgate/router test -- golden invariants && pnpm --filter @surfgate/api test -- session-service && pnpm --filter @surfgate/worker test -- managed-task-worker && pnpm test:relay-load",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:examples && pnpm build",
     "release:check": "pnpm check && pnpm test:security && pnpm test:observability && pnpm test:production-hardening && pnpm test:tasks && pnpm test:integration && pnpm test:conformance"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@surfgate/contracts": "workspace:*",
     "@types/node": "^24.0.0",
     "eslint": "^9.0.0",
     "playwright-core": "^1.58.0",

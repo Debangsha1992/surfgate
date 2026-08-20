@@ -121,4 +121,27 @@ describeWithDatabase('control-plane migrations', () => {
       await migrationDatabase.close()
     }
   }, 10_000)
+
+  it('serializes concurrent migration runners without deadlocking online indexes', async () => {
+    if (configuredTestURL === undefined) throw new Error('Test database URL is unavailable.')
+    const schema = `surfgate_concurrent_migration_${process.pid}_${Date.now()}`
+    const migrations = fileURLToPath(new URL('../../migrations/', import.meta.url))
+    await database.query(`create schema ${schema}`)
+    const scopedURL = new URL(configuredTestURL)
+    scopedURL.searchParams.set('options', `-csearch_path=${schema}`)
+    const runners = Array.from({ length: 4 }, () =>
+      createDatabase({
+        url: scopedURL,
+        requiredMigration: '0014-session-reconciliation-claim-index.sql',
+      }),
+    )
+    try {
+      await expect(
+        Promise.all(runners.map((runner) => runMigrations(runner, migrations))),
+      ).resolves.toHaveLength(runners.length)
+    } finally {
+      await Promise.allSettled(runners.map((runner) => runner.close()))
+      await database.query(`drop schema ${schema} cascade`)
+    }
+  }, 30_000)
 })

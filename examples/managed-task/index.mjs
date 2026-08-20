@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 
+import { ManagedTaskCreateRequestSchema, ManagedTaskResponseSchema } from '@surfgate/contracts'
+
+import { request } from '../request.mjs'
+
 const apiURL = process.env.SURFGATE_API_URL ?? 'http://127.0.0.1:8080'
 const apiKey = process.env.SURFGATE_API_KEY
 const sessionId = process.env.SURFGATE_SESSION_ID
@@ -11,9 +15,11 @@ if (!apiKey || !sessionId) {
 if (!['extract', 'screenshot', 'pdf'].includes(taskType)) {
   throw new Error('SURFGATE_TASK_TYPE must be extract, screenshot, or pdf.')
 }
+const taskRequest = ManagedTaskCreateRequestSchema.parse({ type: taskType })
 
 const auth = { Authorization: `Bearer ${apiKey}` }
-const createdResponse = await fetch(
+const createdResponse = await request(
+  'Task creation',
   `${apiURL}/v1/sessions/${encodeURIComponent(sessionId)}/tasks`,
   {
     method: 'POST',
@@ -22,29 +28,30 @@ const createdResponse = await fetch(
       'Content-Type': 'application/json',
       'Idempotency-Key': `example-${randomUUID()}`,
     },
-    body: JSON.stringify({ type: taskType }),
+    body: JSON.stringify(taskRequest),
   },
 )
 if (!createdResponse.ok)
   throw new Error(`Task creation failed with HTTP ${createdResponse.status}.`)
-let task = (await createdResponse.json()).task
-if (typeof task?.id !== 'string') throw new Error('Response did not contain a task ID.')
+let task = ManagedTaskResponseSchema.parse(await createdResponse.json()).task
 
 while (['queued', 'running', 'retry_pending'].includes(task.status)) {
   await new Promise((resolve) => setTimeout(resolve, 500))
-  const response = await fetch(`${apiURL}/v1/tasks/${encodeURIComponent(task.id)}`, {
+  const response = await request('Task read', `${apiURL}/v1/tasks/${encodeURIComponent(task.id)}`, {
     headers: auth,
   })
   if (!response.ok) throw new Error(`Task read failed with HTTP ${response.status}.`)
-  task = (await response.json()).task
+  task = ManagedTaskResponseSchema.parse(await response.json()).task
 }
 
 console.log(JSON.stringify(task, null, 2))
 const artifactId = task?.result?.artifact?.id
 if (typeof artifactId === 'string') {
-  const response = await fetch(`${apiURL}/v1/artifacts/${encodeURIComponent(artifactId)}`, {
-    headers: auth,
-  })
+  const response = await request(
+    'Artifact download',
+    `${apiURL}/v1/artifacts/${encodeURIComponent(artifactId)}`,
+    { headers: auth },
+  )
   if (!response.ok) throw new Error(`Artifact download failed with HTTP ${response.status}.`)
   const extension =
     task.type === 'pdf' ? 'pdf' : task.result.artifact.mediaType === 'image/jpeg' ? 'jpg' : 'png'

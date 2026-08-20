@@ -20,6 +20,9 @@ function recordingDatabase(events: string[]): Database {
   const queryable: Queryable = {
     query<Row extends QueryResultRow = QueryResultRow>(text: string): Promise<readonly Row[]> {
       events.push(text.trim())
+      if (text.includes('pg_try_advisory_lock')) {
+        return Promise.resolve([{ acquired: true }] as unknown as readonly Row[])
+      }
       return Promise.resolve([])
     },
   }
@@ -53,7 +56,7 @@ it('acquires one session migration lock before opening any transaction', async (
   await runMigrations(recordingDatabase(events), directory)
 
   const lockIndexes = events
-    .map((event, index) => (event.startsWith('select pg_advisory_lock(') ? index : -1))
+    .map((event, index) => (event.startsWith('select pg_try_advisory_lock(') ? index : -1))
     .filter((index) => index >= 0)
   const unlockIndexes = events
     .map((event, index) => (event.startsWith('select pg_advisory_unlock(') ? index : -1))

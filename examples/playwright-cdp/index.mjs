@@ -1,4 +1,7 @@
 import { chromium } from 'playwright-core'
+import { RelayTokenResponseSchema } from '@surfgate/contracts'
+
+import { request } from '../request.mjs'
 
 const apiURL = process.env.SURFGATE_API_URL ?? 'http://127.0.0.1:8080'
 const apiKey = process.env.SURFGATE_API_KEY
@@ -8,15 +11,16 @@ if (!apiKey || !sessionId) {
   throw new Error('Set SURFGATE_API_KEY and SURFGATE_SESSION_ID before running this example.')
 }
 
-const response = await fetch(`${apiURL}/v1/sessions/${encodeURIComponent(sessionId)}/relay-token`, {
-  method: 'POST',
-  headers: { Authorization: `Bearer ${apiKey}` },
-})
+const response = await request(
+  'Relay-token request',
+  `${apiURL}/v1/sessions/${encodeURIComponent(sessionId)}/relay-token`,
+  {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+  },
+)
 if (!response.ok) throw new Error(`Relay-token request failed with HTTP ${response.status}.`)
-const relay = await response.json()
-if (typeof relay?.webSocketUrl !== 'string' || typeof relay?.token !== 'string') {
-  throw new Error('Relay-token response was invalid.')
-}
+const relay = RelayTokenResponseSchema.parse(await response.json())
 
 const browser = await chromium.connectOverCDP(relay.webSocketUrl, {
   headers: { Authorization: `Bearer ${relay.token}` },

@@ -60,6 +60,7 @@ cp .env.example .env
 docker compose -f docker-compose.dev.yml up -d --wait
 pnpm --filter @surfgate/api db:migrate
 pnpm --filter @surfgate/api bootstrap:dev
+export SURFGATE_API_KEY='paste-the-one-time-bootstrap-key-here'
 pnpm dev
 ```
 

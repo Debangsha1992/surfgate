@@ -134,6 +134,24 @@ describe('parseConfig', () => {
     expect(config.security.rawCDPAccess).toBe('trusted')
   })
 
+  it('uses the development raw-CDP default for an explicit empty value', () => {
+    const config = parseConfig({
+      ...VALID_DEVELOPMENT_ENVIRONMENT,
+      SURFGATE_RAW_CDP_ACCESS: '',
+    })
+
+    expect(config.security.rawCDPAccess).toBe('trusted')
+  })
+
+  it('uses the production raw-CDP default for an explicit empty value', () => {
+    const config = parseConfig({
+      ...VALID_PRODUCTION_ENVIRONMENT,
+      SURFGATE_RAW_CDP_ACCESS: '',
+    })
+
+    expect(config.security.rawCDPAccess).toBe('disabled')
+  })
+
   it('rejects obvious development key material in production', () => {
     expect(() =>
       parseConfig({
