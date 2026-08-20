@@ -2,7 +2,16 @@
   "name": "surfgate",
   "version": "0.0.0",
   "private": true,
-  "description": "Browser runtime router for AI agents",
+  "description": "Provider-neutral browser runtime router and control plane for AI agents",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Debangsha1992/surfgate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Debangsha1992/surfgate/issues"
+  },
+  "homepage": "https://github.com/Debangsha1992/surfgate#readme",
   "engines": {
     "node": ">=24 <25"
   },
@@ -31,6 +40,7 @@
     "@eslint/js": "^9.0.0",
     "@types/node": "^24.0.0",
     "eslint": "^9.0.0",
+    "playwright-core": "^1.58.0",
     "prettier": "^3.0.0",
     "turbo": "^2.0.0",
     "typescript": "^5.9.0",
