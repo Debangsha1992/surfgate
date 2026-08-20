@@ -12,7 +12,13 @@ export async function request(operation, input, init = {}, timeoutMs = REQUEST_T
       signal,
     })
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'TimeoutError') {
+    if (
+      error instanceof DOMException &&
+      error.name === 'TimeoutError' &&
+      timeoutSignal.aborted &&
+      signal.reason === timeoutSignal.reason &&
+      error === timeoutSignal.reason
+    ) {
       throw new Error(`${operation} timed out after ${timeoutMs} ms.`, { cause: error })
     }
     throw error
