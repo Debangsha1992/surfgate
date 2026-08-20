@@ -27,6 +27,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "bootstrap:dev": "pnpm build && node dist/bootstrap-dev.js",
     "db:migrate": "pnpm build && node dist/database/migrate.js",
     "db:restore-drill": "pnpm build && node dist/database/restore-drill.js",
     "reconcile:sessions": "pnpm build && node dist/reconcile.js",

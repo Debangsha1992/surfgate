@@ -1,12 +1,16 @@
 import { randomBytes } from 'node:crypto'
 
 import {
+  APIKeyIDSchema,
   TaskIDSchema,
   RoutingDecisionIDSchema,
   SessionIDSchema,
+  TenantIDSchema,
+  type APIKeyID,
   type RoutingDecisionID,
   type SessionID,
   type TaskID,
+  type TenantID,
 } from '@surfgate/contracts'
 
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -25,6 +29,12 @@ function ulid(now: number): string {
 }
 export function generateSessionID(now = Date.now()): SessionID {
   return SessionIDSchema.parse(`ses_${ulid(now)}`)
+}
+export function generateTenantID(now = Date.now()): TenantID {
+  return TenantIDSchema.parse(`ten_${ulid(now)}`)
+}
+export function generateAPIKeyID(now = Date.now()): APIKeyID {
+  return APIKeyIDSchema.parse(`key_${ulid(now)}`)
 }
 export function generateRoutingDecisionID(now = Date.now()): RoutingDecisionID {
   return RoutingDecisionIDSchema.parse(`rtd_${ulid(now)}`)

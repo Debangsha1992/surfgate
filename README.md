@@ -1,259 +1,104 @@
 # SurfGate
 
-SurfGate is a provider-neutral browser runtime router and control plane for AI agents. It accepts capability-driven session requests, applies tenant policy and deterministic routing, and allocates either a lightweight Kitesurf runtime or a full Chromium runtime without exposing provider credentials to clients.
+SurfGate is a provider-neutral browser runtime router and control plane for AI agents.
 
-## Why SurfGate
+> **Experimental Developer Preview** — built for development, research, and experimentation; not offered as a managed production service.
 
-Browser workloads do not all need the same runtime. A short-lived DOM or screenshot task may fit an efficient lightweight engine, while WebGL, persistent authentication, multi-tab work, or broader browser compatibility may require Chromium.
+## What is SurfGate?
 
-SurfGate provides one stable abstraction over those runtimes. Kitesurf is the preferred fast path when its declared capabilities satisfy the request; Chromium is the compatibility path. Public contracts remain provider-neutral, and required capabilities or tenant policy always take precedence over preference and score.
-
-## Architecture
-
-```mermaid
-flowchart TD
-    Client[AI Agent / Client]
-    API[SurfGate Control Plane]
-    Router[Deterministic Router]
-    K[Kitesurf Provider]
-    C[Chromium Provider]
-    DB[(PostgreSQL)]
-    Redis[(Redis)]
-    Relay[Authenticated CDP Relay]
-    Worker[Managed Task Worker]
-    Objects[(Private S3 / R2)]
-
-    Client --> API
-    API --> Router
-    Router --> K
-    Router --> C
-    API --> DB
-    API --> Redis
-    Client --> Relay
-    Relay --> K
-    Relay --> C
-    Relay --> DB
-    Relay --> Redis
-    Worker --> K
-    Worker --> C
-    Worker --> DB
-    Worker --> Objects
-```
-
-The control plane authenticates clients, validates requests, applies quotas and idempotency, records routing decisions, allocates through the provider interface, persists session state, and emits audit and telemetry events. The router remains pure domain logic and never performs network or database operations.
-
-## Current Status
-
-The current implementation includes:
-
-- Node.js 24, pnpm, Turbo, strict TypeScript, ESLint, Prettier, and Vitest monorepo tooling
-- Runtime-validated typed configuration
-- Provider-neutral IDs, errors, capabilities, session contracts, and runtime schemas
-- A shared browser-provider interface, deterministic fake provider, and reusable conformance suite
-- Cloudflare Browser Run adapters for Kitesurf and Chromium
-- Deterministic hard filtering, scoring, stable reason codes, decision records, and bounded fallback
-- PostgreSQL migrations and tenant-scoped repositories
-- Tenant and API-key authentication with one-time key issuance and non-plaintext storage
-- Race-safe session state transitions and encrypted provider-session references
-- Authenticated session creation, inspection, and idempotent termination
-- Durable idempotency, concurrent-session quotas, Redis request-rate limiting, audit events, and telemetry hooks
-- Runtime-schema-coupled OpenAPI output
-- Short-lived tenant/session-scoped relay credentials
-- Independently deployable authenticated CDP WebSocket relay
-- One-controller-per-session Redis coordination and distributed revocation
-- Bounded bidirectional streaming with frame, queue, idle, session, and absolute limits
-- Durable provider-neutral extract, screenshot, and PDF task contracts and state transitions
-- Independently runnable PostgreSQL-leased managed-task worker with bounded retries
-- Private S3/R2-compatible artifact storage with authenticated tenant-scoped downloads
-
-Clients can either control an active browser through the relay or enqueue a bounded managed task against that existing session. Managed tasks never reroute or allocate a replacement runtime after browser interaction begins. Clients never receive upstream provider WebSocket endpoints or Cloudflare credentials.
-
-## Repository Structure
+Clients ask for browser capabilities rather than choosing a provider directly. SurfGate validates the request, applies policy, and deterministically selects an eligible runtime.
 
 ```text
-apps/
-  api/                    Fastify control plane and persistence
-  relay/                  Authenticated bounded CDP data plane
-  worker/                 Independently deployable managed-task executor
-
-packages/
-  contracts/              Public schemas, IDs, capabilities, and errors
-  config/                 Validated runtime configuration
-  router/                 Pure deterministic routing and fallback logic
-  provider-core/          Provider-neutral lifecycle contract
-  provider-cloudflare/    Private shared Cloudflare transport
-  provider-kitesurf/      Kitesurf adapter
-  provider-chromium/      Chromium adapter
-  security/               Target policy, relay tokens, and protected references
-  observability/          Shared OpenTelemetry runtime, metrics, traces, and safe logging
-  task-core/              Provider-neutral task lifecycle and execution ports
-  task-postgres/          Durable task claiming, leases, and artifact metadata
-  object-storage/         Private S3/R2-compatible artifact adapter
-  testing/                Fake provider and shared conformance suite
+AI agent → SurfGate → Kitesurf
+                    ↘ Chromium
 ```
 
-## Prerequisites
+Kitesurf is the lightweight path. Chromium is the broader compatibility path. Both sit behind the same tenant-scoped API, provider contract, and security boundary.
 
-- Node.js 24 LTS
-- pnpm 10.15.1 through Corepack
-- Docker with Docker Compose
+## Why SurfGate?
 
-Local PostgreSQL 17 and Redis 8 are provided by `docker-compose.dev.yml`.
+Not every browser workload necessarily needs a full Chromium runtime. SurfGate explores whether lighter runtimes can serve compatible workloads while preserving an explicit compatibility path for broader browser features. It makes no unsupported performance or cost guarantee.
 
-## Local Development
+## How it works
+
+```mermaid
+flowchart LR
+    Client[AI Agent / Client] --> API[API control plane]
+    API --> Router[Deterministic router]
+    Router --> K[Kitesurf]
+    Router --> C[Chromium]
+    Client --> Relay[Authenticated CDP relay]
+    Relay --> K
+    Relay --> C
+    API --> DB[(PostgreSQL)]
+    API --> Redis[(Redis)]
+    Worker[Task worker] --> DB
+    Worker --> Objects[(Private object storage)]
+    Worker --> K
+    Worker --> C
+```
+
+## Features
+
+- Provider-neutral browser sessions and capability contracts
+- Deterministic hard filtering, scoring, reason codes, and bounded allocation fallback
+- Cloudflare Browser Run adapters for Kitesurf and Chromium
+- Authenticated CDP relay that keeps provider credentials server-side
+- Managed extract, screenshot, and PDF tasks
+- PostgreSQL persistence, Redis coordination, and private artifact storage
+- OpenTelemetry traces, metrics, and structured logs
+- Tenant isolation, SSRF policy, redaction, resource limits, and provider conformance tests
+
+## Quick Start
+
+Requirements: Node.js 24, Corepack/pnpm 10.15.1, Docker Compose, and an S3-compatible private bucket when running the worker.
 
 ```bash
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 cp .env.example .env
-docker compose -f docker-compose.dev.yml up -d
-```
-
-Before starting the API or relay, set both `SURFGATE_PROVIDER_SESSION_ENCRYPTION_KEY` and `SURFGATE_RELAY_TOKEN_SIGNING_KEY` in the local `.env` to independently generated base64-encoded 32-byte values. Then run:
-
-```bash
+docker compose -f docker-compose.dev.yml up -d --wait
 pnpm --filter @surfgate/api db:migrate
+pnpm --filter @surfgate/api bootstrap:dev
+export SURFGATE_API_KEY='paste-the-one-time-bootstrap-key-here'
 pnpm dev
 ```
 
-The root development command starts all persistent workspace processes through Turbo. To run only the task worker after migrations:
+Before migration, put two distinct base64-encoded 32-byte development keys in `.env`. Live session allocation additionally needs Cloudflare credentials. See [Getting Started](docs/GETTING_STARTED.md) for the complete setup and safe key-generation commands.
+
+## Example
 
 ```bash
-pnpm --filter @surfgate/worker dev
+curl --fail-with-body http://127.0.0.1:8080/v1/sessions \
+  -H "Authorization: Bearer $SURFGATE_API_KEY" \
+  -H "Idempotency-Key: first-session" \
+  -H 'Content-Type: application/json' \
+  --data '{"capabilities":{"javascript":"required","dom":"required"},"runtime":{"preference":"auto","allowFallback":true,"allowExperimental":false},"maxDurationSeconds":600}'
 ```
 
-Keep `.env` local. Cloudflare account credentials are optional for ordinary builds and deterministic tests; they are required only for separately gated live Kitesurf, Chromium, or control-plane provider tests.
+More copyable examples live in [`examples/`](examples/).
 
-Check or stop local infrastructure with:
+## Project Status
 
-```bash
-docker compose -f docker-compose.dev.yml ps
-docker compose -f docker-compose.dev.yml down
-```
+SurfGate is an experimental developer preview, not a production-readiness claim or contractual SLA. In particular, SurfGate **does not claim complete SSRF or network isolation for arbitrary raw CDP browser activity**. Untrusted raw-CDP deployments require independent egress controls or provider/browser request interception. Read the [security model](docs/SECURITY_MODEL.md) before enabling raw CDP.
 
-## Quality Gates
+## Documentation
 
-```bash
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm check
-```
+- [Getting Started](docs/GETTING_STARTED.md)
+- [User and API Guide](docs/USER_GUIDE.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Routing](docs/ROUTING.md)
+- [Providers](docs/PROVIDERS.md)
+- [Security Model](docs/SECURITY_MODEL.md)
+- [Operations](operations/observability.md) and [Runbooks](operations/runbooks.md)
+- [Roadmap](ROADMAP.md)
 
-Additional established suites include:
+The running API publishes its schema-derived OpenAPI document at `GET /openapi.json`.
 
-```bash
-pnpm test:integration
-pnpm test:conformance
-pnpm test:security
-pnpm --filter @surfgate/router test:golden
-pnpm test:relay-load
-pnpm test:tasks
-pnpm test:observability
-pnpm test:production-hardening
-pnpm test:capacity
-pnpm test:recovery
-pnpm release:check
-```
+## Contributing
 
-Integration tests require Redis and an isolated PostgreSQL database whose name ends in `_test`. Create the local test database once and run the suite with:
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and report vulnerabilities through [SECURITY.md](SECURITY.md).
 
-```bash
-docker compose -f docker-compose.dev.yml exec -T postgres \
-  createdb -U surfgate surfgate_test
+## License
 
-TEST_DATABASE_URL=postgresql://surfgate:surfgate@127.0.0.1:5432/surfgate_test \
-  pnpm --filter @surfgate/api test:integration
-```
-
-Live provider tests are gated separately and are not part of normal CI or `pnpm check`.
-
-## API
-
-Implemented HTTP endpoints:
-
-- `GET /health/live`
-- `GET /health/ready`
-- `GET /openapi.json`
-- `POST /v1/sessions`
-- `GET /v1/sessions/:sessionId`
-- `DELETE /v1/sessions/:sessionId`
-- `POST /v1/sessions/:sessionId/relay-token`
-- `POST /v1/sessions/:sessionId/tasks`
-- `GET /v1/tasks/:taskId`
-- `GET /v1/artifacts/:artifactId`
-
-Session endpoints require tenant-scoped bearer authentication. Session creation also requires an `Idempotency-Key` header. The service publishes its runtime-schema-derived OpenAPI contract at `/openapi.json`.
-
-Only an active, unexpired session can obtain a relay credential. The credential is short-lived, bound to one tenant and one session, and is accepted by the relay at `WS /v1/sessions/:sessionId/cdp` only through an `Authorization: Bearer` upgrade header. It is never placed in a URL or WebSocket subprotocol. One controller connection is permitted per session. Disconnecting the client closes only the relay transport; deleting or expiring the session revokes relay access and retains provider termination in the control plane.
-
-The relay exposes separate `/health/live` and `/health/ready` endpoints. During shutdown it stops upgrades, closes active client/upstream pairs within the configured drain bound, releases Redis ownership, and exits. New connections fail closed when PostgreSQL or Redis authorization state is unavailable.
-
-The worker exposes the same liveness/readiness split on its configured health port (default `8082`). Readiness requires PostgreSQL and object storage. API, relay, and worker share one bounded OpenTelemetry runtime; OTLP/HTTP export is enabled only when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured, and exporter failure does not change serving health.
-
-### Relay operations
-
-- Drain a relay instance through its normal `SIGTERM`/`SIGINT` shutdown path; the configured drain timeout bounds graceful client/upstream closure before hard cleanup.
-- Treat PostgreSQL and Redis readiness failures as authorization-safety failures. Restore the dependency before accepting new relay connections rather than bypassing the check.
-- Investigate `UPSTREAM_CONNECT_FAILED` using provider health and server-side Cloudflare configuration. SurfGate deliberately omits upstream response bodies, authorization headers, and provider URLs from client errors and logs.
-- Rotate `SURFGATE_RELAY_TOKEN_SIGNING_KEY` together with its key ID and retain the old pair temporarily in `SURFGATE_RELAY_TOKEN_SIGNING_PREVIOUS_KEY{,_ID}`. Existing short-lived credentials remain valid during the bounded overlap; remove the previous key after the maximum five-minute token TTL plus rollout skew.
-- Keep provider-session encryption-key rotation separate from relay-token signing-key rotation; neither key may be reused for the other purpose.
-- Use [operations/observability.md](operations/observability.md) for telemetry taxonomy, health semantics, proposed internal SLOs, alerts, and dashboard requirements. Incident procedures are in [operations/runbooks.md](operations/runbooks.md).
-
-The integration suite includes a browser-download-free Playwright Core `connectOverCDP` compatibility test. It verifies that a standard CDP client can authenticate to SurfGate through an upgrade header without learning the provider authorization credential.
-
-Managed task creation requires `tasks:write` and an `Idempotency-Key`; status reads require `tasks:read`; artifact downloads require `artifacts:read`. Only active, unexpired, tenant-owned sessions accept tasks. Durable task delivery is at least once: the idempotency key prevents duplicate task creation, while a worker may repeat the same bounded read-only browser operation after a lost lease or uncertain persistence result. SurfGate does not claim exactly-once browser execution.
-
-Screenshot and PDF bytes are kept out of PostgreSQL and public JSON, stored under attempt-unique private object keys, integrity-checked on tenant-authorized access, and assigned a configurable expiry. Cloudflare R2 encrypts objects at rest automatically; deployments must also enforce a bucket-level public-access block/private policy and lifecycle rules. The current worker cleans known losing attempts; automatic collection of expired artifacts or objects left by uncertain storage/database outcomes remains a deployment/reconciliation responsibility.
-
-## Routing
-
-Routing is deterministic and explainable:
-
-1. Hard capability, configuration, health, duration, safety, and tenant-policy constraints reject ineligible candidates.
-2. Only eligible candidates receive a versioned deterministic score.
-3. Stable reason codes and tie-breaking make decisions replayable.
-4. A classified allocation failure may trigger at most one cross-runtime fallback.
-
-Required capabilities can never be overridden by scoring. The initial `router-v1` policy prefers Kitesurf when compatible and healthy, while Chromium remains the broader compatibility path.
-
-## Security
-
-The current control plane is designed so that:
-
-- Provider credentials and secret-bearing connection metadata remain server-side.
-- API keys are shown only at creation and stored as salted one-way hashes.
-- Durable resource access and repositories are tenant-scoped.
-- Sensitive provider-session references are encrypted before persistence.
-- Relay tokens are signed, short-lived, audience-bound, and checked against current durable session state.
-- Upstream WebSocket URLs and authorization headers remain inside the relay data plane.
-- Frame and queue limits prevent slow peers from creating unbounded relay buffers.
-- Authentication, policy, quota, and public error behavior use validated stable contracts.
-- Target URLs accept only HTTP(S), reject embedded credentials, and deny localhost plus private, link-local, metadata, multicast, reserved, and other special-use IPv4/IPv6 destinations.
-- Hostname targets are normalized, all bounded DNS answers are checked, resolution must remain stable across repeated checks, and the target is checked again immediately before provider allocation.
-- Redirect-chain validation applies the same bounded URL, DNS, and destination policy to every supplied hop and rejects loops or excessive chains.
-- API responses opt out of caching and MIME sniffing; request bodies and request lifetimes are bounded. Cross-origin access is disabled unless a future explicit policy enables it.
-- Structured API and relay logging share recursive, non-mutating redaction for authorization data, API/relay/provider tokens, cookies, passwords, connection credentials, and secret-bearing URLs.
-- SurfGate does not provide CAPTCHA bypass, stealth plugins, TLS fingerprint spoofing, or other anti-bot evasion features.
-
-Raw CDP frames, page content, cookies, relay tokens, and provider URLs are never included in normal logs. SurfGate does not migrate or replay an active CDP session across runtimes.
-
-### Browser-navigation security boundary
-
-The control plane validates a requested `targetUrl`, but the current Cloudflare allocation API creates a browser session without asking SurfGate to perform that navigation. Once an authenticated client controls the transparent CDP relay, commands such as `Page.navigate`, script-driven navigation, popups, and browser subresource requests are resolved inside the provider browser. SurfGate currently cannot pin that browser's DNS socket or inspect every provider-side redirect, so the URL policy and redirect-chain helper must not be interpreted as complete SSRF isolation for arbitrary raw CDP activity.
-
-Raw CDP is therefore disabled by default when `NODE_ENV=production`. Set `SURFGATE_RAW_CDP_ACCESS=trusted` only when relay access is restricted to explicitly trusted principals and the deployment/provider supplies an independent egress boundary. Managed tasks remain available while raw CDP is disabled. This is an explicit conditional production trust boundary, not a claim of complete SSRF containment.
-
-## Production and recovery
-
-API, relay, and worker have independent hardened multi-stage container builds under their application directories. Run migrations as a separate one-shot job before rollout; ordinary service startup never changes schema. Readiness verifies the required migration rather than only checking that PostgreSQL accepts a connection.
-
-Stale/expired session lifecycle recovery is a private bounded job:
-
-```bash
-pnpm --filter @surfgate/api reconcile:sessions
-```
-
-See [production readiness](operations/production-readiness.md), [deployment](operations/deployment.md), [recovery](operations/recovery.md), the [dependency failure matrix](operations/failure-matrix.md), and [capacity/limits](operations/capacity-and-limits.md). The current assessment is **CONDITIONAL GO**: production is supportable with raw CDP disabled or trusted-only behind independent egress controls and after the documented release/restore gates pass.
+SurfGate is licensed under [GNU AGPL v3.0 only](LICENSE). SPDX identifier: `AGPL-3.0-only`. Contributions are accepted under the same license.

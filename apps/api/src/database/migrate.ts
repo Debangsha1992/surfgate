@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { loadDatabaseMigrationConfig } from '@surfgate/config'
@@ -11,6 +12,7 @@ const MIGRATION_FILE_PATTERN = /^\d{4}-[a-z0-9-]+\.sql$/u
 const MIGRATION_LOCK_ID = 7_602_451_903
 const ONLINE_INDEX_DIRECTIVE = /^-- surfgate:online-index ([a-z][a-z0-9_]*)$/mu
 const ONLINE_MIGRATION_TIMEOUT_MS = 30 * 60 * 1_000
+const MIGRATION_LOCK_RETRY_MS = 100
 
 type AppliedMigrationRow = Readonly<{ name: string; checksum: string }>
 
@@ -85,6 +87,22 @@ async function runOnlineIndexMigration(
   ])
 }
 
+async function acquireMigrationLock(connection: Queryable): Promise<void> {
+  const deadline = Date.now() + ONLINE_MIGRATION_TIMEOUT_MS
+  while (true) {
+    const result = await connection.query<{ acquired: boolean }>(
+      'select pg_try_advisory_lock($1) as acquired',
+      [MIGRATION_LOCK_ID],
+    )
+    if (result[0]?.acquired === true) return
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) {
+      throw new Error('Timed out waiting for the SurfGate migration lock.')
+    }
+    await delay(Math.min(MIGRATION_LOCK_RETRY_MS, remainingMs))
+  }
+}
+
 export async function runMigrations(database: Database, directory: string): Promise<void> {
   const sqlFilenames = readdirSync(directory).filter((filename) => filename.endsWith('.sql'))
   const invalidFilename = sqlFilenames.find((filename) => !MIGRATION_FILE_PATTERN.test(filename))
@@ -94,7 +112,7 @@ export async function runMigrations(database: Database, directory: string): Prom
   const filenames = sqlFilenames.toSorted()
 
   await database.connection(async (lockConnection) => {
-    await lockConnection.query('select pg_advisory_lock($1)', [MIGRATION_LOCK_ID])
+    await acquireMigrationLock(lockConnection)
     try {
       await database.transaction(async (transaction) => {
         await ensureLedger(transaction)

@@ -55,7 +55,7 @@ pnpm test:capacity
 pnpm test:recovery
 ```
 
-Integration gates require isolated PostgreSQL (`*_test`) and Redis. Live Cloudflare/object-storage smoke remains separately credential-gated and must always clean up. `skills-lock.json`, `.env`, Codex state, build output, and local caches are not release inputs.
+Integration gates require isolated PostgreSQL (`*_test`) and Redis. Live Cloudflare/object-storage smoke remains separately credential-gated and must always clean up. Local tool state, `.env`, build output, and caches are not release inputs.
 
 ## Known limitations and lower-priority work
 
